@@ -250,8 +250,34 @@ async function mulai() {
         } else {
           const a = r.akhir;
           const lokasi = a.dari ? ` [${a.dari}]` : '';
-          log(`   ⤷ akhir: switch anomali ${a.sebelum ? 'sudah aktif' : a.diubah ? 'diaktifkan' : 'GAGAL diaktifkan'}, tombol Kirim ${a.dikirim ? 'DIKLIK' + lokasi : a.dari ? `terdeteksi${lokasi} (tidak diklik)` : 'TIDAK ditemukan'}`);
+          let pesan;
+          if (a.dialog && a.dialog.kartu && a.dialog.kartu.length) {
+            const kartuStr = a.dialog.kartu.map((k) => `${k.label}=${k.jumlah}`).join(' ');
+            if (a.dialog.ditahan) {
+              pesan = `DIALOG DITAHAN TERBUKA${lokasi} (${a.dialog.deskripsi || '?'} | ${kartuStr})`;
+            } else if (a.dialog.dikonfirmasi) {
+              pesan = `DIKONFIRMASI lewat dialog${lokasi} (${a.dialog.deskripsi || '?'} | ${kartuStr})`;
+            } else {
+              pesan = `dialog dibatalkan${lokasi} (${a.dialog.deskripsi || '?'} | ${kartuStr})`;
+            }
+          } else if (a.dikirim) {
+            pesan = `DIKIRIM tanpa dialog${lokasi}`;
+          } else if (a.dari) {
+            pesan = `terdeteksi${lokasi} (tidak diklik)`;
+          } else {
+            pesan = 'TIDAK ditemukan';
+          }
+          log(`   ⤷ akhir: switch anomali ${a.sebelum ? 'sudah aktif' : a.diubah ? 'diaktifkan' : 'GAGAL diaktifkan'}, tombol Kirim ${pesan}`);
         }
+      }
+
+      // Jeda antar baris — DI LUAR if (r.akhir), jalan untuk semua jenis hasil.
+      // Hormati stopFlag; jitter hanya MENAMBAH.
+      const jedaDasar = Number(CONFIG.JEDA_ANTAR_BARIS_S) || 0;
+      if (jedaDasar > 0 && i < target.length - 1 && !stopFlag) {
+        const jeda = jedaDasar + Math.random() * jedaDasar;
+        log(`   ⋯ jeda ${jeda.toFixed(1)} detik sebelum baris berikutnya`);
+        await tidur(jeda);
       }
     }
   } catch (e) {

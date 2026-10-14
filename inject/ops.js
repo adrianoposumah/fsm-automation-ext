@@ -331,9 +331,11 @@
     },
 
     async akhirCatatan(a) {
-      // a.blok      : judul sidebar blok catatan (mis. 'CATATAN')
-      // a.idToggle  : id kontainer switch anomali (mis. 'cek_anomali_button')
-      // a.klikKirim : true = tekan Kirim (MENYIMPAN); false = deteksi saja.
+      // a.blok             : judul sidebar blok catatan (mis. 'CATATAN')
+      // a.idToggle         : id kontainer switch anomali (mis. 'cek_anomali_button')
+      // a.klikKirim        : true = klik tombol Kirim utama (memunculkan dialog)
+      // a.konfirmasiKirim  : true = klik Kirim di dalam dialog (MENYIMPAN);
+      //                      false = klik Batal di dialog (tidak menyimpan).
       const isHeader = (el) => el.hasAttribute('title') && el.nextElementSibling && /^collapsible-/.test(el.nextElementSibling.id || '');
       const headers = (root) => [...root.querySelectorAll('[title]')].filter(isHeader);
       const judul = (h) => norm(h.getAttribute('title'));
@@ -343,17 +345,51 @@
         return r && terlihat(r) ? r : null;
       };
 
-      // Cari tombol Kirim di dua lokasi:
-      //   (a) #fasih-form-nav-submit-button di bawah form (kalau blok catatan terakhir)
-      //   (b) tombol navbar atas bertulisan persis "Kirim" (di luar aside)
       const cariTombolKirim = () => {
         const bawah = document.getElementById('fasih-form-nav-submit-button');
         if (bawah && terlihat(bawah)) return { el: bawah, dari: 'form-bawah' };
-        const navbar = [...document.querySelectorAll('button')].filter((b) => terlihat(b) && norm(b.textContent) === 'kirim' && !b.closest('aside'));
+        const navbar = [...document.querySelectorAll('button')].filter((b) => terlihat(b) && norm(b.textContent) === 'kirim' && !b.closest('aside') && !b.closest('[role="dialog"]'));
         return navbar.length ? { el: navbar[0], dari: 'navbar-atas' } : null;
       };
 
-      // 1) Klik sidebar CATATAN sampai #<idToggle> muncul & terlihat.
+      const cariDialogKirim = () => {
+        const ds = [...document.querySelectorAll('[role="dialog"]')].filter(terlihat);
+        return (
+          ds.find((d) => {
+            const t = d.querySelector('[id$="-title"]');
+            return t && norm(t.textContent) === 'kirim';
+          }) || null
+        );
+      };
+
+      const bacaRingkasanDialog = (dialog) => {
+        const kartu = [];
+        for (const b of dialog.querySelectorAll('button[type="button"]')) {
+          if (b.getAttribute('aria-label')) continue;
+          const spans = [...b.querySelectorAll('span')];
+          let label = '',
+            jumlah = null,
+            ket = '';
+          for (const s of spans) {
+            const cls = typeof s.className === 'string' ? s.className : '';
+            const txt = s.textContent.trim();
+            if (!txt) continue;
+            if (/uppercase/.test(cls) && !label) label = txt;
+            else if (/text-base/.test(cls) && jumlah === null && /^\d+$/.test(txt)) jumlah = parseInt(txt, 10);
+            else if (!ket && /text-\[10px\]/.test(cls)) ket = txt;
+          }
+          if (label && jumlah !== null) kartu.push({ label, jumlah, ket });
+        }
+        const judulEl = dialog.querySelector('[id$="-title"]');
+        const descEl = dialog.querySelector('[id$="-description"]');
+        return {
+          judul: judulEl ? judulEl.textContent.trim() : '',
+          deskripsi: descEl ? descEl.textContent.trim() : '',
+          kartu,
+        };
+      };
+
+      // 1) Buka sidebar CATATAN.
       const blok = await tunggu(() => headers(document).find((h) => judul(h) === norm(a.blok)), 8000);
       if (!blok) return { ok: false, pesan: `blok "${a.blok}" tidak ditemukan di sidebar` };
 
@@ -379,7 +415,7 @@
           pesan: `#${a.idToggle} tidak muncul setelah klik sidebar "${a.blok}" (klik: ${klikKe})`,
         };
 
-      // 2) Cari switch dan cek status awal.
+      // 2) Aktifkan switch anomali kalau belum.
       const sw = root.querySelector('input[role="switch"]') || root.querySelector('input[type="checkbox"]');
       if (!sw) return { ok: false, pesan: 'switch input tidak ditemukan di dalam ' + a.idToggle };
 
@@ -405,7 +441,7 @@
           pesan: 'switch tidak berubah menjadi true',
         };
 
-      // 3) Tunggu tombol Kirim muncul — di bawah form ATAU di navbar atas.
+      // 3) Cari tombol Kirim utama.
       const tombol = await tunggu(cariTombolKirim, 5000);
       if (!tombol)
         return {
@@ -415,17 +451,17 @@
           diubah,
           dikirim: false,
           dari: null,
+          dialog: null,
           pesan: 'tombol Kirim tidak ditemukan (baik di bawah form maupun navbar)',
         };
 
-      // 4) Highlight; klik hanya kalau a.klikKirim === true.
       const btn = tombol.el;
       if (btn.scrollIntoView) btn.scrollIntoView({ block: 'center' });
       btn.style.outline = '3px solid #dc2626';
       await new Promise((r) => setTimeout(r, 700));
-      btn.style.outline = '';
 
-      if (!a.klikKirim)
+      if (!a.klikKirim) {
+        btn.style.outline = '';
         return {
           ok: true,
           sebelum: statusSebelum,
@@ -433,17 +469,72 @@
           diubah,
           dikirim: false,
           dari: tombol.dari,
+          dialog: null,
           pesan: `tombol Kirim terdeteksi di ${tombol.dari} (tidak diklik — klikKirim=false)`,
         };
+      }
 
+      // 4) Klik tombol Kirim utama → tunggu dialog konfirmasi.
       btn.click();
+      btn.style.outline = '';
+
+      const dialog = await tunggu(cariDialogKirim, 6000);
+      if (!dialog)
+        return {
+          ok: true,
+          sebelum: statusSebelum,
+          sesudah: statusSesudah,
+          diubah,
+          dikirim: false,
+          dari: tombol.dari,
+          dialog: null,
+          pesan: 'tombol Kirim diklik tetapi dialog konfirmasi tidak muncul',
+        };
+
+      const ringkasan = bacaRingkasanDialog(dialog);
+
+      // 5) Klik Batal (default) atau Kirim (kalau konfirmasiKirim aktif).
+      // 5) Kalau tahanDialog: biarkan dialog terbuka, tidak klik apa pun.
+      if (a.tahanDialog) {
+        return {
+          ok: true,
+          sebelum: statusSebelum,
+          sesudah: statusSesudah,
+          diubah,
+          dikirim: false,
+          dari: tombol.dari,
+          dialog: { ...ringkasan, ditahan: true, dikonfirmasi: false, dibatalkan: false },
+        };
+      }
+
+      // 5b) Kalau tidak tahanDialog: klik Batal (default) atau Kirim.
+      const btnBatal = [...dialog.querySelectorAll('button')].find((b) => !b.getAttribute('aria-label') && norm(b.textContent) === 'batal');
+      const btnKonfirm = [...dialog.querySelectorAll('button')].find((b) => !b.getAttribute('aria-label') && norm(b.textContent) === 'kirim');
+      const btnDismiss = dialog.querySelector('button[aria-label="Dismiss"]');
+
+      let dikonfirmasi = false;
+      if (a.konfirmasiKirim && btnKonfirm) {
+        btnKonfirm.click();
+        dikonfirmasi = true;
+      } else if (btnBatal) {
+        btnBatal.click();
+      } else if (btnDismiss) {
+        btnDismiss.click();
+      } else {
+        dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      }
+
+      await tunggu(() => !cariDialogKirim(), 5000);
+      await new Promise((r) => setTimeout(r, 800));
+
       return {
         ok: true,
         sebelum: statusSebelum,
         sesudah: statusSesudah,
         diubah,
-        dikirim: true,
+        dikirim: dikonfirmasi,
         dari: tombol.dari,
+        dialog: { ...ringkasan, dikonfirmasi, dibatalkan: !dikonfirmasi },
       };
     },
     async cek(a) {

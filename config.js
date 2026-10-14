@@ -32,7 +32,16 @@ const CONFIG = {
     blok: 'CATATAN',
     idToggle: 'cek_anomali_button',
     klikKirim: true,
+    tahanDialog: true,
+    konfirmasiKirim: false, // false = klik Batal di dialog (tidak menyimpan)
+    // true  = klik Kirim di dialog (MENYIMPAN — §11)
   },
+
+  // Jeda wajib antar baris (detik). Dijalankan setelah langkah akhir selesai,
+  // sebelum baris berikutnya diproses. Berguna supaya SPA menutup dialog /
+  // menyelesaikan animasi sebelum navigasi berikutnya.
+  // Jitter hanya MENAMBAH (0–1× nilai) supaya tidak terlalu teratur.
+  JEDA_ANTAR_BARIS_S: 4,
 
   // Kalkulasi total & skip jika minus.
   //   pengeluaran = gaji + biaya_produksi + biaya_pembelian + operasional + non_operasional
