@@ -89,6 +89,121 @@ const CONFIG = {
     },
   },
 };
+// ─────────────────────────────────────────────────────────────────────
+// Definisi blok: satu entri = satu "mode" pengisian.
+// Setiap blok punya sidebar, identitas record, dan daftar field sendiri.
+// Menambah blok baru cukup menambah entri di sini — jangan ubah engine.
+//   sidebar.item = null → tidak ada pemilihan item (mis. Blok P / KK)
+//   sidebar.item ≠ null → ada daftar item (mis. daftar usaha di Blok II)
+//   identitas.varId bisa id polos (nama_kk) atau prefix (#N di Blok II)
+//   fields[nama] = { varId, label, tipe, kolom: [...] }
+// ─────────────────────────────────────────────────────────────────────
+const BLOKS = {
+  'blok2-usaha': {
+    judul: 'Update Usaha (Blok II)',
+    sidebar: {
+      blok: 'SE2026 - L BLOK II',
+      grup: 'Keterangan Usaha/Perusahaan',
+      item: {
+        kolomExcel: 'nama_usaha', // tebakan awal kolom Excel (bisa diganti di panel)
+        cocok: 'ketat', // 'ketat' | 'longgar'
+        wajibTepat: 1,
+      },
+    },
+    identitas: {
+      varId: 'nama_komersial',
+      label: 'Nama komersial',
+    },
+    fields: {
+      'Biaya Produksi': {
+        varId: 'biaya_produksi',
+        label: 'Biaya produksi',
+        tipe: 'angka',
+        kolom: ['biaya_produksi', 'biaya produksi'],
+      },
+      'Biaya Operasional': {
+        varId: 'operasional',
+        label: 'Biaya operasional',
+        tipe: 'angka',
+        kolom: ['biaya_operasional', 'operasional', 'biaya operasional'],
+      },
+    },
+    kalkulasiSkip: true, // ikut perhitungan pendapatan - pengeluaran
+  },
+
+  'blokP-kk': {
+    judul: 'Update KK (Blok P)',
+    sidebar: {
+      blok: 'SE2026 - P',
+      grup: null,
+      item: null, // tidak ada pemilihan item — buka blok langsung tampil form
+    },
+    identitas: {
+      varId: 'nama_kk',
+      label: 'Nama KK',
+    },
+    fields: {
+      'Nomor KK': {
+        varId: 'no_kk',
+        label: 'Nomor KK',
+        tipe: 'teks',
+        kolom: ['no_kk', 'nomor_kk', 'nomor kk'],
+      },
+      NIK: {
+        varId: 'nik',
+        label: 'NIK',
+        tipe: 'teks',
+        kolom: ['nik'],
+      },
+      'Nama KK': {
+        varId: 'nama_kk',
+        label: 'Nama Kepala Keluarga',
+        tipe: 'teks',
+        kolom: ['nama_kk', 'nama kepala keluarga', 'nama kk'],
+      },
+    },
+    kalkulasiSkip: false, // Blok P tidak ikut kalkulasi skip-minus
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────
+// Definisi mode: satu entri = satu skenario lengkap.
+// Mode tahu: aksi apa yang dijalankan (review/usaha/cek/isi) dan blok mana
+// yang dipakai (atau null untuk mode review murni).
+// Menambah mode baru = tambah entri di sini.
+// ─────────────────────────────────────────────────────────────────────
+const MODES = {
+  review: {
+    judul: 'Tes Review — buka link → halaman review',
+    aksi: 'review',
+    blok: null,
+  },
+  usaha: {
+    judul: 'Tes pilih usaha — Blok II (tanpa isi field)',
+    aksi: 'usaha',
+    blok: 'blok2-usaha',
+  },
+  'cek-usaha': {
+    judul: 'Cek field usaha — Blok II (tidak mengubah)',
+    aksi: 'cek',
+    blok: 'blok2-usaha',
+  },
+  'isi-usaha': {
+    judul: 'Isi usaha tanpa simpan — Blok II',
+    aksi: 'isi',
+    blok: 'blok2-usaha',
+  },
+  'cek-kk': {
+    judul: 'Cek field KK — Blok P (tidak mengubah)',
+    aksi: 'cek',
+    blok: 'blokP-kk',
+  },
+  'isi-kk': {
+    judul: 'Isi KK tanpa simpan — Blok P',
+    aksi: 'isi',
+    blok: 'blokP-kk',
+  },
+};
 
 const RATE_LIMIT_PROFILES = {
   normal: {

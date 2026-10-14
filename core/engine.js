@@ -12,6 +12,9 @@ function gabung(daftar) {
 const jumlahDari = (r) => r.reduce((s, x) => s + (x.jumlah || 0), 0);
 
 async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
+  const blok = opsi.blok;
+  if (!blok) return { status: 'PERLU CEK MANUAL: blok tidak dikenal' };
+
   await limiter.tunggu('filter');
   await buka(link, limiter);
 
@@ -39,44 +42,65 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
   if (nEdit !== 1) return { status: `PERLU CEK MANUAL: tombol Edit ditemukan ${nEdit}` };
   if (!(await tungguUrl((p) => /\/edit\/?$/.test(p), 10000))) return { status: 'GAGAL: halaman /edit tidak terbuka' };
 
+  // --- Buka blok sidebar (dengan atau tanpa pemilihan item) ---
   await limiter.tunggu('filter');
-  const ru = (
-    await jalankanDiTab('usaha', {
-      blok: CONFIG.BLOK_USAHA.blok,
-      grup: CONFIG.BLOK_USAHA.grup,
-      nama: opsi.namaUsaha,
-      longgar: opsi.longgar,
-      debug: opsi.debug,
-    })
-  ).find((r) => r.ada);
+  const fieldVarIds = Object.values(blok.fields || {})
+    .map((f) => f.varId)
+    .filter(Boolean);
+
+  let ru;
+  if (blok.sidebar.item) {
+    // Blok dengan daftar item (mis. Blok II — pilih usaha)
+    ru = (
+      await jalankanDiTab('usaha', {
+        blok: blok.sidebar.blok,
+        grup: blok.sidebar.grup,
+        nama: opsi.namaUsaha,
+        longgar: opsi.longgar,
+        debug: opsi.debug,
+        fieldVarIds,
+      })
+    ).find((r) => r.ada);
+  } else {
+    // Blok tanpa item (mis. Blok P — form langsung tampil setelah header dibuka)
+    ru = (
+      await jalankanDiTab('bukaBlok', {
+        blok: blok.sidebar.blok,
+        fieldVarIds,
+      })
+    ).find((r) => r.ada);
+  }
   if (!ru && (await butuhLogin(true))) throw new SesiHabis();
   if (!ru)
     return {
-      status: 'PERLU CEK MANUAL: Blok usaha di sidebar tidak ditemukan (cek BLOK_USAHA di config.js)',
+      status: `PERLU CEK MANUAL: Blok "${blok.sidebar.blok}" tidak ditemukan di sidebar`,
     };
-  if (!ru.ok) return { status: 'PERLU CEK MANUAL: ' + ru.pesan };
+  if (!ru.ok) return { status: 'PERLU CEK MANUAL: ' + (ru.pesan || 'blok tidak bisa dibuka') };
 
-  // Baca identitas record yang sedang terbuka (untuk log).
+  // --- Identitas record ---
   let teksIdn = '';
-  if (CONFIG.IDENTITAS && CONFIG.IDENTITAS.varId) {
-    const rIdn = (
-      await jalankanDiTab('bacaIdentitas', {
-        varId: [CONFIG.IDENTITAS.varId],
-      })
-    ).find((x) => x.nilai && x.nilai[CONFIG.IDENTITAS.varId] !== undefined && x.nilai[CONFIG.IDENTITAS.varId] !== null);
-    const nilaiIdn = rIdn ? rIdn.nilai[CONFIG.IDENTITAS.varId] : null;
-    const label = CONFIG.IDENTITAS.label;
-    teksIdn = nilaiIdn ? `${label} di halaman: "${nilaiIdn}"` : `${label} di halaman: (tidak ditemukan)`;
+  if (blok.identitas && blok.identitas.varId) {
+    const rIdn = (await jalankanDiTab('bacaIdentitas', { varId: [blok.identitas.varId] })).find((x) => x.nilai && x.nilai[blok.identitas.varId] !== undefined && x.nilai[blok.identitas.varId] !== null);
+    const nilaiIdn = rIdn ? rIdn.nilai[blok.identitas.varId] : null;
+    teksIdn = nilaiIdn ? `${blok.identitas.label} di halaman: "${nilaiIdn}"` : `${blok.identitas.label} di halaman: (tidak ditemukan)`;
   }
 
+  // --- Nilai baru dari Excel untuk field terpilih ---
   const fields = {},
     nilai = {};
   for (const k of pilih) {
-    fields[k] = CONFIG.FIELDS[k];
+    fields[k] = blok.fields[k];
     nilai[k] = opsi.petaKolom[k] ? baris[opsi.petaKolom[k]] : '';
   }
 
+  // Mode "Tes pilih usaha" hanya berlaku untuk blok dengan item.
   if (mode === 'usaha') {
+    if (!blok.sidebar.item) {
+      return {
+        status: 'PERLU CEK MANUAL: mode "Tes pilih usaha" tidak berlaku untuk blok tanpa daftar item',
+        identitas: teksIdn,
+      };
+    }
     return {
       status: ru.formMuncul ? `USAHA OK: dipilih 1 dari ${ru.total} usaha` : `PERLU CEK MANUAL: usaha ditemukan tetapi form tidak muncul`,
       detail:
@@ -89,14 +113,13 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
     };
   }
 
-  // --- Kalkulasi selisih: skip baris jika minus (hanya mode isi) ---
+  // --- Kalkulasi skip-minus (hanya kalau blok mengaktifkannya) ---
   let kalk = null;
-  if (mode === 'isi' && CONFIG.KALKULASI_SKIP && CONFIG.KALKULASI_SKIP.aktif) {
+  if (mode === 'isi' && blok.kalkulasiSkip && CONFIG.KALKULASI_SKIP && CONFIG.KALKULASI_SKIP.aktif) {
     const cf = CONFIG.KALKULASI_SKIP;
-    // Nilai baru dari Excel untuk field yang dipilih, dipetakan ke varId-nya.
     const baru = {};
     for (const k of pilih) {
-      const v = CONFIG.FIELDS[k] && CONFIG.FIELDS[k].varId;
+      const v = blok.fields[k] && blok.fields[k].varId;
       if (v) baru[v] = nilai[k];
     }
     const rs = (
@@ -124,6 +147,7 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
     }
   }
 
+  // --- Cek & isi field (tetap seperti sebelumnya) ---
   let g = gabung(await jalankanDiTab('cek', { fields }));
   const bermasalah = pilih.filter((k) => !g[k] || !g[k].ketemu || g[k].ambigu || g[k].tersembunyi);
   if (mode === 'isi' && !bermasalah.length) {
@@ -136,8 +160,7 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
     );
   }
 
-  // Langkah akhir opsional: buka sidebar Catatan, aktifkan switch anomali,
-  // deteksi tombol Kirim. Tidak menyimpan kecuali klikKirim=true.
+  // --- Langkah akhir ---
   let akhir = null;
   if (mode === 'isi' && !bermasalah.length && CONFIG.LANGKAH_AKHIR && CONFIG.LANGKAH_AKHIR.aktif) {
     try {
@@ -172,26 +195,38 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
 
 async function mulai() {
   if (workTabId === null) return log('Buka jendela kerja dan login dulu.');
-  const mode = $('mode').value;
+  const modeId = $('mode').value;
+  const mode = MODES[modeId];
+  if (!mode) return log('Mode tidak dikenal: ' + modeId);
+
+  const aksi = mode.aksi;
+  const blok = mode.blok ? BLOKS[mode.blok] : null;
+  if (mode.blok && !blok) return log(`Blok "${mode.blok}" tidak ada di config.`);
+
   const kolomLink = $('kolomLink').value;
   const kolomUsaha = $('kolomUsaha').value;
   const longgar = $('kecocokan').value === 'longgar';
   const pilih = [...document.querySelectorAll('#kolomUpdate input:checked')].map((c) => c.value);
+
   if (!rows.length || !kolomLink) return log('Pilih file Excel dan kolom link dulu.');
-  if (mode !== 'review' && !kolomUsaha) return log('Pilih kolom nama usaha dulu.');
+
+  const butuhItem = !!(blok && blok.sidebar.item);
+  if (aksi !== 'review' && butuhItem && !kolomUsaha) return log('Mode ini butuh kolom nama item (mis. nama usaha) di Excel.');
+
   const petaKolom = {};
   document.querySelectorAll('#kolomUpdate select').forEach((sel) => {
     petaKolom[sel.dataset.k] = sel.value;
   });
-  if ((mode === 'cek' || mode === 'isi') && !pilih.length) return log('Centang minimal satu field untuk dicek/diisi.');
-  if (mode === 'isi' && pilih.some((k) => !petaKolom[k])) return log('Pilih kolom Excel untuk setiap field yang dicentang.');
+
+  if ((aksi === 'cek' || aksi === 'isi') && !pilih.length) return log('Centang minimal satu field untuk dicek/diisi.');
+  if (aksi === 'isi' && pilih.some((k) => !petaKolom[k])) return log('Pilih kolom Excel untuk setiap field yang dicentang.');
 
   stopFlag = false;
   hasil = [];
   const limiter = buatLimiter(RATE_LIMIT_PROFILES[$('profil').value]);
   const target = rows.slice(0, Math.max(1, parseInt($('batas').value, 10) || rows.length));
   setBusy(true);
-  log(`Mulai: ${target.length} baris, mode ${mode}, profil ${$('profil').value}.`);
+  log(`Mulai: ${target.length} baris, mode ${modeId}, profil ${$('profil').value}.`);
   try {
     await buka(`https://${CONFIG.HOST}${CONFIG.START_PATH}`, limiter).catch((e) => {
       if (!(e instanceof SesiHabis)) throw e;
@@ -211,11 +246,12 @@ async function mulai() {
           r = { status: 'DILEWATI: link kosong atau host tidak cocok' };
         } else {
           r = await denganSesi(() =>
-            alurBaris(baris, link, mode, pilih, limiter, {
+            alurBaris(baris, link, aksi, pilih, limiter, {
               namaUsaha: String(baris[kolomUsaha] || ''),
               longgar,
               petaKolom,
               debug: $('debug').checked,
+              blok,
             }),
           );
         }

@@ -250,12 +250,59 @@
       };
     },
 
+    async bukaBlok(a) {
+      // Buka satu header sidebar level 1 tanpa memilih item.
+      // Dipakai untuk blok yang form-nya langsung tampil (mis. Blok P / KK).
+      // a.blok        : judul header sidebar (mis. 'SE2026 - P')
+      // a.fieldVarIds : array prefix id field untuk deteksi form muncul
+      const isHeader = (el) => el.hasAttribute('title') && el.nextElementSibling && /^collapsible-/.test(el.nextElementSibling.id || '');
+      const headers = (root) => [...root.querySelectorAll('[title]')].filter(isHeader);
+      const judul = (h) => norm(h.getAttribute('title'));
+      const terbuka = (h) => h.nextElementSibling.hasAttribute('data-expanded');
+      const bukaHeader = async (h) => {
+        if (terbuka(h)) return true;
+        for (const el of [h, h.querySelector('[title]'), h.lastElementChild]) {
+          if (!el) continue;
+          el.click();
+          if (await tunggu(() => terbuka(h), 1500)) return true;
+        }
+        return false;
+      };
+
+      const blok = await tunggu(() => headers(document).find((h) => judul(h) === norm(a.blok)), 10000);
+      if (!blok) return { ada: false };
+
+      const terbukaAwal = terbuka(blok);
+      let diklikBuka = false;
+      if (!terbukaAwal) diklikBuka = await bukaHeader(blok);
+
+      // Tunggu form muncul di area utama (id polos atau prefix #N)
+      const prefiks = Array.isArray(a.fieldVarIds) ? a.fieldVarIds : [];
+      const adaForm = () => prefiks.some((p) => document.querySelector(`[id^="${p}#"]`) || document.getElementById(p));
+      const formMuncul = prefiks.length ? !!(await tunggu(adaForm, 8000)) : true;
+
+      if (blok.scrollIntoView) blok.scrollIntoView({ block: 'center' });
+      blok.style.outline = '3px solid #16a34a';
+      await new Promise((r) => setTimeout(r, 400));
+      blok.style.outline = '';
+
+      return {
+        ada: true,
+        ok: true,
+        terbukaAwal,
+        diklik: diklikBuka,
+        formMuncul,
+        kontrol: [...document.querySelectorAll(kontrol)].length,
+        terlihat: [...document.querySelectorAll(kontrol)].filter(terlihat).length,
+      };
+    },
+
     async bacaIdentitas(a) {
-      // a.varId: array awalan id kontainer (mis. ['nama_komersial']).
-      // Setiap frame yang punya field itu akan mengembalikan nilai; frame lain null.
       const out = {};
       for (const v of a.varId || []) {
-        const w = document.querySelector('[id^="' + v + '#"]');
+        // Prioritas: [id^="varId#"] (Blok II). Fallback: id polos (Blok P).
+        let w = document.querySelector('[id^="' + v + '#"]');
+        if (!w) w = document.getElementById(v);
         if (!w) {
           out[v] = null;
           continue;
