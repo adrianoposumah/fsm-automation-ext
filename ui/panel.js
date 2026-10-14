@@ -86,7 +86,9 @@ function pasangPanel() {
   $('btnLog').onclick = () => {
     if (!hasil.length) return log('Belum ada hasil.');
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(hasil), 'log');
+    const kolom = ['baris_excel', 'link', 'mode', 'status', 'detail', 'catatan', 'identitas', 'total_pendapatan', 'total_pengeluaran', 'selisih', 'konfirmasi_awal', 'konfirmasi_akhir', 'waktu'];
+    const data = hasil.map((baris) => Object.fromEntries(kolom.map((k) => [k, baris[k] ?? ''])));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data, { header: kolom }), 'log');
     XLSX.writeFile(wb, `log_${Date.now()}.xlsx`);
   };
 
@@ -166,9 +168,59 @@ function renderKolomUpdate() {
   const mode = MODES[$('mode').value];
   const blok = mode && mode.blok ? BLOKS[mode.blok] : null;
 
-  if (!blok || !blok.fields || !Object.keys(blok.fields).length) {
+  if (!blok) {
     $('kolomUpdate').innerHTML = '<small class="hint">(mode ini tidak mengisi field)</small>';
-    const pakaiItem = !!(blok && blok.sidebar.item);
+    $('kolomUsaha').disabled = true;
+    $('kecocokan').disabled = true;
+    return;
+  }
+
+  // ── Mode KK: 5 kolom tetap (info / input / validasi), tanpa checkbox ──
+  if (mode.aksi === 'kk') {
+    const daftar = [
+      { kunci: 'no_kk_awal', label: 'No KK awal (info)', kolom: blok.info.no_kk_awal.kolom },
+      { kunci: 'konfirmasi', label: 'Konfirmasi 1/2/3 (info)', kolom: blok.info.konfirmasi.kolom },
+      { kunci: 'kk_usul', label: 'KK usul (diinput)', kolom: blok.fields['Nomor KK'].kolom },
+      { kunci: 'nik_usul', label: 'NIK usul (validasi)', kolom: blok.validasi.nik.kolom },
+      { kunci: 'nama_nik', label: 'Nama NIK (validasi)', kolom: blok.validasi.nama.kolom },
+    ];
+    const opsi = `<option value="">(pilih kolom)</option>` + kolom.map((k) => `<option value="${esc(k)}">${esc(k)}</option>`).join('');
+    $('kolomUpdate').innerHTML = daftar
+      .map((d) => `<div class="field-row">` + `<span>${esc(d.label)}</span>` + `<select data-kk="${esc(d.kunci)}">${opsi}</select>` + `<small class="pratinjau" data-kk="${esc(d.kunci)}"></small>` + `</div>`)
+      .join('');
+
+    const contohKolom = (kol) => {
+      if (!kol) return '';
+      const b = rows.find((r) => String(r[kol] ?? '').trim() !== '');
+      if (!b) return '(kosong)';
+      const v = String(b[kol]);
+      return `contoh: "${v.length > 30 ? v.slice(0, 30) + '…' : v}"`;
+    };
+    const perbaruiPratinjau = (sel) => {
+      const el = [...$('kolomUpdate').querySelectorAll('small.pratinjau')].find((s) => s.dataset.kk === sel.dataset.kk);
+      if (el) el.textContent = contohKolom(sel.value);
+    };
+
+    $('kolomUpdate')
+      .querySelectorAll('select')
+      .forEach((sel) => {
+        const d = daftar.find((x) => x.kunci === sel.dataset.kk);
+        const tebak = (d.kolom || []).map((t) => t.toLowerCase());
+        const ketemu = kolom.find((k) => tebak.includes(k.trim().toLowerCase()));
+        if (ketemu) sel.value = ketemu;
+        perbaruiPratinjau(sel);
+        sel.addEventListener('change', () => perbaruiPratinjau(sel));
+      });
+
+    $('kolomUsaha').disabled = true;
+    $('kecocokan').disabled = true;
+    return;
+  }
+
+  // ── Mode lain: tampilkan blok.fields seperti sebelumnya ──
+  if (!blok.fields || !Object.keys(blok.fields).length) {
+    $('kolomUpdate').innerHTML = '<small class="hint">(mode ini tidak mengisi field)</small>';
+    const pakaiItem = !!blok.sidebar.item;
     $('kolomUsaha').disabled = !pakaiItem;
     $('kecocokan').disabled = !pakaiItem;
     return;

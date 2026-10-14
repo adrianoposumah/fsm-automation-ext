@@ -190,7 +190,317 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
   let status;
   if (bermasalah.length) status = `${mode === 'isi' ? 'PERLU CEK MANUAL' : 'CEK GAGAL'}: ada field tidak ketemu/tidak tampil/ambigu${mode === 'isi' ? ', tidak ada yang diisi' : ''}`;
   else status = mode === 'isi' ? 'DRY-RUN: diisi, tidak disimpan' : 'CEK OK: semua field ketemu dan tampil';
-  return { status, detail, identitas: teksIdn, akhir, kalk };
+  const catatan = pilih
+    .map((k) => (g[k] && g[k].catatan && g[k].catatan.teks ? String(g[k].catatan.teks) : ''))
+    .filter(Boolean)
+    .join(' | ');
+  return { status, detail, identitas: teksIdn, akhir, kalk, catatan };
+}
+
+async function alurKK(baris, link, petaKK, limiter) {
+  const blok1 = BLOKS['blok1-keluarga'];
+  const blokP = BLOKS['blokP-kk'];
+
+  const excel = (kunci) => {
+    const kol = petaKK[kunci];
+    return kol ? String(baris[kol] ?? '').trim() : '';
+  };
+  const noKKAwalExcel = excel('no_kk_awal');
+  const konfirmasiAwalRaw = excel('konfirmasi');
+  const kkUsul = excel('kk_usul');
+  const nikUsul = excel('nik_usul');
+  const namaNIKExcel = excel('nama_nik');
+
+  const konfAwal = konfirmasiAwalRaw || '1. Belum diperbaiki';
+
+  // 1) Buka link
+  await limiter.tunggu('filter');
+  await buka(link, limiter);
+
+  // 2) Cari tombol Review
+  const rv = await jalankanDiTab('reviewHref', { teks: CONFIG.TEKS_REVIEW, ms: 10000 });
+  const nRev = jumlahDari(rv);
+  if (nRev === 0 && (await butuhLogin(true))) throw new SesiHabis();
+  if (nRev !== 1)
+    return {
+      status: `PERLU CEK MANUAL: tombol Review ditemukan ${nRev}`,
+      konfirmasiAwal: konfAwal,
+      konfirmasiAkhir: konfAwal,
+    };
+  const href = rv.find((r) => r.jumlah === 1).href;
+  if (new URL(href).host !== CONFIG.HOST)
+    return {
+      status: 'PERLU CEK MANUAL: link Review mengarah ke host lain',
+      konfirmasiAwal: konfAwal,
+      konfirmasiAkhir: konfAwal,
+    };
+
+  // 3) Buka halaman Review
+  await limiter.tunggu('filter');
+  await buka(href, limiter);
+
+  // 5) Buka L BLOK I → pilih anggota keluarga bila identitas Excel lengkap.
+  // Jika tidak lengkap, tetap lanjut ke jalur tanpa Edit agar catatan #DC_00
+  // dapat dicatat pada field no_kk yang hanya tersedia di halaman Review.
+  let nikH = '';
+  let namaH = '';
+  if (nikUsul && namaNIKExcel) {
+    await limiter.tunggu('filter');
+    const ru1 = (
+      await jalankanDiTab('usaha', {
+        blok: blok1.sidebar.blok,
+        grup: blok1.sidebar.grup,
+        nama: namaNIKExcel,
+        longgar: true,
+        debug: false,
+        fieldVarIds: ['nik_dtsen', 'nama_dtsen'],
+      })
+    ).find((r) => r.ada);
+
+    if (!ru1 && (await butuhLogin(true))) throw new SesiHabis();
+    if (!ru1)
+      return {
+        status: 'PERLU CEK MANUAL: L BLOK I tidak ditemukan di sidebar',
+        konfirmasiAwal: konfAwal,
+        konfirmasiAkhir: konfAwal,
+      };
+    if (!ru1.ok)
+      return {
+        status: `PERLU CEK MANUAL: L BLOK I — ${ru1.pesan || 'tidak bisa dibuka'}`,
+        konfirmasiAwal: konfAwal,
+        konfirmasiAkhir: '3. Tidak diperbaiki',
+      };
+
+    await new Promise((r) => setTimeout(r, 500));
+
+    // 6) Baca nik_dtsen & nama_dtsen
+    const rNilai1 = (await jalankanDiTab('bacaIdentitas', { varId: ['nik_dtsen', 'nama_dtsen'] })).find((x) => x.utama);
+    const nilai1 = rNilai1 ? rNilai1.nilai : {};
+    nikH = String(nilai1.nik_dtsen ?? '').trim();
+    namaH = String(nilai1.nama_dtsen ?? '').trim();
+  }
+
+  const teksIdn = `Anggota: "${namaH || '(kosong)'}" (NIK ${nikH || '-'})`;
+  const detailValidasi = `NIK halaman="${nikH || '-'}" vs Excel="${nikUsul || '-'}"; ` + `nama halaman="${namaH || '-'}" vs Excel="${namaNIKExcel || '-'}"`;
+
+  // 7) Validasi
+  const identitasExcelLengkap = !!nikUsul && !!namaNIKExcel;
+  const nikCocok = identitasExcelLengkap && nikH === nikUsul;
+  const namaCocok = identitasExcelLengkap && namaH.toLowerCase() === namaNIKExcel.toLowerCase();
+  if (identitasExcelLengkap && (!nikCocok || !namaCocok))
+    return {
+      status: `DILEWATI: validasi gagal (NIK ${nikCocok ? 'OK' : 'BEDA'}, nama ${namaCocok ? 'OK' : 'BEDA'})`,
+      detail: detailValidasi,
+      konfirmasiAwal: konfAwal,
+      konfirmasiAkhir: '3. Tidak diperbaiki',
+      identitas: teksIdn,
+    };
+
+  // 8) Cek tombol Edit
+  const nEdit = jumlahDari(await jalankanDiTab('hitung', { css: CONFIG.EDIT_CSS, ms: 5000 }));
+
+  // 9) Tanpa tombol Edit — tetap validasi no_kk dan catat hasil kelengkapan Excel.
+  if (nEdit === 0) {
+    await limiter.tunggu('filter');
+    const rBlokP = (
+      await jalankanDiTab('bukaBlok', {
+        blok: blokP.sidebar.blok,
+        fieldVarIds: ['no_kk'],
+      })
+    ).find((x) => x && x.ada);
+    if (!rBlokP || !rBlokP.ada)
+      return {
+        status: 'PERLU CEK MANUAL: Blok P tidak ditemukan tanpa tombol Edit',
+        detail: detailValidasi,
+        konfirmasiAwal: konfAwal,
+        konfirmasiAkhir: konfAwal,
+        identitas: teksIdn,
+      };
+    await new Promise((r) => setTimeout(r, 500));
+
+    const rNoKK = (await jalankanDiTab('bacaIdentitas', { varId: ['no_kk'] })).find((x) => x.utama);
+    const noKKH = String((rNoKK && rNoKK.nilai && rNoKK.nilai.no_kk) || '').trim();
+    const cfg = blokP.catatanKK;
+    const kodeCatatan = cfg && cfg.aktif ? (nikUsul && namaNIKExcel && kkUsul ? cfg.kodeBerubah || '#DC_03' : cfg.kodeTetap || '#DC_00') : '';
+    let catat = null;
+    if (kodeCatatan) {
+      try {
+        catat = (await jalankanDiTab('catatanField', {
+          varId: 'no_kk',
+          teks: kodeCatatan,
+          simpan: !!cfg.kirimCatatan,
+        })).find((x) => x && x.ok !== undefined);
+      } catch (e) {
+        catat = { ok: false, pesan: 'error: ' + (e && e.message) };
+      }
+    }
+    const catatTxt = catat
+      ? catat.ok
+        ? `; catatan "${catat.teks}"${catat.dikirim ? ' DIKIRIM' : ' terisi (tidak dikirim)'}`
+        : `; catatan GAGAL: ${catat.pesan || '?'}`
+      : '';
+
+    if (kkUsul && noKKH === kkUsul)
+      return {
+        status: 'VALIDASI OK: no_kk sudah benar (tanpa tombol Edit)',
+        detail: `no_kk halaman="${noKKH}" vs Excel="${kkUsul}"${catatTxt} | ${detailValidasi}`,
+        konfirmasiAwal: konfAwal,
+        konfirmasiAkhir: '2. Sudah diperbaiki',
+        identitas: teksIdn,
+        catatan: catat && catat.teks ? String(catat.teks) : '',
+      };
+    return {
+      status: 'VALIDASI: no_kk halaman ≠ KK usul (tanpa tombol Edit)',
+      detail: `no_kk halaman="${noKKH || '-'}" vs Excel="${kkUsul || '-'}"${catatTxt} | ${detailValidasi}`,
+      konfirmasiAwal: konfAwal,
+      konfirmasiAkhir: '3. Tidak diperbaiki',
+      identitas: teksIdn,
+      catatan: catat && catat.teks ? String(catat.teks) : '',
+    };
+  }
+
+  // 10) Klik Edit
+  await limiter.tunggu('filter');
+  await jalankanDiTab('klikEdit', { css: CONFIG.EDIT_CSS, ms: 10000 });
+  if (!(await tungguUrl((p) => /\/edit\/?$/.test(p), 10000)))
+    return {
+      status: 'GAGAL: halaman /edit tidak terbuka',
+      detail: detailValidasi,
+      konfirmasiAwal: konfAwal,
+      konfirmasiAkhir: konfAwal,
+      identitas: teksIdn,
+    };
+
+  // 11) Blok P di /edit → baca no_kk
+  await limiter.tunggu('filter');
+  const rBlokP = (
+    await jalankanDiTab('bukaBlok', {
+      blok: blokP.sidebar.blok,
+      fieldVarIds: ['no_kk'],
+    })
+  ).find((x) => x && x.ada);
+  if (!rBlokP || !rBlokP.ada)
+    return {
+      status: 'PERLU CEK MANUAL: Blok P tidak ditemukan di halaman /edit',
+      detail: detailValidasi,
+      konfirmasiAwal: konfAwal,
+      konfirmasiAkhir: konfAwal,
+      identitas: teksIdn,
+    };
+  if (!rBlokP.ok || !rBlokP.formMuncul)
+    return {
+      status: 'PERLU CEK MANUAL: field no_kk belum tampil di Blok P',
+      detail: (rBlokP.pesan || 'form no_kk tidak muncul') + ' | ' + detailValidasi,
+      konfirmasiAwal: konfAwal,
+      konfirmasiAkhir: konfAwal,
+      identitas: teksIdn,
+    };
+  await new Promise((r) => setTimeout(r, 500));
+
+  const rNoKK2 = (await jalankanDiTab('bacaIdentitas', { varId: ['no_kk'] })).find((x) => x.utama);
+  const noKKH2 = String((rNoKK2 && rNoKK2.nilai && rNoKK2.nilai.no_kk) || '').trim();
+
+  // Helper: jalankan catatan + kirim pembaruan sesuai config.
+  const jalankanCatatKirim = async (kodeCatatan) => {
+    const cfg = blokP.catatanKK;
+    if (!cfg || !cfg.aktif) return { catatTxt: '', kirimTxt: '', catatan: '' };
+
+    let catat = null;
+    let kirim = null;
+    if (kodeCatatan) {
+      try {
+        catat = (await jalankanDiTab('catatanField', {
+          varId: 'no_kk',
+          teks: kodeCatatan,
+          simpan: !!cfg.kirimCatatan,
+        })).find((x) => x && x.ok !== undefined);
+      } catch (e) {
+        catat = { ok: false, pesan: 'error: ' + (e && e.message) };
+      }
+    }
+
+    try {
+      const langkahAkhir = CONFIG.LANGKAH_AKHIR || {};
+      kirim = (
+        await jalankanDiTab('akhirCatatan', {
+          ...langkahAkhir,
+          // KK memakai alur akhir yang sama dengan mode usaha:
+          // buka CATATAN → aktifkan anomali → buka dialog Kirim.
+          klikKirim: true,
+          // false berarti inspeksi dry-run: dialog final dibiarkan terbuka.
+          tahanDialog: !cfg.kirimPembaruan,
+          konfirmasiKirim: !!cfg.kirimPembaruan,
+        })
+      ).find((x) => x && x.ok !== undefined);
+    } catch (e) {
+      kirim = { ok: false, pesan: 'error: ' + (e && e.message) };
+    }
+
+    const catatTxt = catat
+      ? catat.ok
+        ? `; catatan "${catat.teks}"${catat.dikirim ? ' DIKIRIM' : ' terisi (tidak dikirim)'}`
+        : `; catatan GAGAL: ${catat.pesan}`
+      : '';
+    let kirimTxt = '';
+    if (kirim) {
+      if (!kirim.ok) kirimTxt = `; kirim GAGAL: ${kirim.pesan}`;
+      else if (kirim.dikonfirmasi) kirimTxt = '; pembaruan DIKIRIM';
+      else if (kirim.dialog && kirim.dialog.ditahan) kirimTxt = '; dialog Kirim dibuka (belum dikirim)';
+      else kirimTxt = '; pembaruan dibatalkan (dry-run)';
+    }
+    return { catatTxt, kirimTxt, catatan: catat && catat.teks ? String(catat.teks) : '' };
+  };
+
+  // 12a) Sudah sesuai sejak awal → catatan #DC_00 + kirim sesuai config
+  if (noKKH2 === kkUsul) {
+    const cfg = blokP.catatanKK;
+    const kode = cfg && cfg.aktif ? cfg.kodeTetap || '#DC_00' : '';
+    const { catatTxt, kirimTxt, catatan } = await jalankanCatatKirim(kode);
+    return {
+      status: 'VALIDASI OK: no_kk di /edit sudah sesuai',
+      detail: `no_kk="${noKKH2}"${catatTxt}${kirimTxt} | ${detailValidasi}`,
+      konfirmasiAwal: konfAwal,
+      konfirmasiAkhir: '2. Sudah diperbaiki',
+      identitas: teksIdn,
+      catatan,
+    };
+  }
+
+  // 12b) Isi no_kk dengan KK usul
+  const fieldNoKK = blokP.fields['Nomor KK'];
+  const g = gabung(
+    await jalankanDiTab('isi', {
+      fields: { 'Nomor KK': fieldNoKK },
+      nilai: { 'Nomor KK': kkUsul },
+      // Catatan KK dijalankan sesudah input melalui `catatanKK`.
+      catatan: { aktif: false },
+    }),
+  );
+  const hasil = g['Nomor KK'];
+
+  if (!hasil || !hasil.diisi) {
+    return {
+      status: 'GAGAL: no_kk tidak bisa diisi',
+      detail: (hasil ? hasil.alasan || '' : 'field tidak ketemu') + ' | ' + detailValidasi,
+      konfirmasiAwal: konfAwal,
+      konfirmasiAkhir: konfAwal,
+      identitas: teksIdn,
+    };
+  }
+
+  // 13) Catatan #DC_03 (karena berubah) + kirim pembaruan
+  const cfgKK = blokP.catatanKK;
+  const kodeCatatan = cfgKK && cfgKK.aktif ? cfgKK.kodeBerubah || '#DC_03' : '';
+  const { catatTxt, kirimTxt, catatan } = await jalankanCatatKirim(kodeCatatan);
+
+  return {
+    status: 'DIISI: no_kk diperbarui',
+    detail: `"${hasil.lama}" → "${kkUsul}"${catatTxt}${kirimTxt} | ${detailValidasi}`,
+    konfirmasiAwal: konfAwal,
+    konfirmasiAkhir: '2. Sudah diperbaiki',
+    identitas: teksIdn,
+    catatan,
+  };
 }
 
 async function mulai() {
@@ -201,6 +511,18 @@ async function mulai() {
 
   const aksi = mode.aksi;
   const blok = mode.blok ? BLOKS[mode.blok] : null;
+
+  // Mode KK: 5 kolom khusus dari #kolomUpdate select[data-kk]
+  let petaKK = null;
+  if (aksi === 'kk') {
+    petaKK = {};
+    document.querySelectorAll('#kolomUpdate select[data-kk]').forEach((sel) => {
+      petaKK[sel.dataset.kk] = sel.value;
+    });
+    const wajib = ['no_kk_awal', 'konfirmasi', 'kk_usul', 'nik_usul', 'nama_nik'];
+    const kurang = wajib.filter((k) => !petaKK[k]);
+    if (kurang.length) return log('Kolom belum dipilih: ' + kurang.join(', '));
+  }
   if (mode.blok && !blok) return log(`Blok "${mode.blok}" tidak ada di config.`);
 
   const kolomLink = $('kolomLink').value;
@@ -244,6 +566,8 @@ async function mulai() {
       try {
         if (!/^https:\/\//.test(link) || new URL(link).host !== CONFIG.HOST) {
           r = { status: 'DILEWATI: link kosong atau host tidak cocok' };
+        } else if (aksi === 'kk') {
+          r = await denganSesi(() => alurKK(baris, link, petaKK, limiter));
         } else {
           r = await denganSesi(() =>
             alurBaris(baris, link, aksi, pilih, limiter, {
@@ -266,17 +590,24 @@ async function mulai() {
       hasil.push({
         baris_excel: i + 2,
         link,
+        mode: modeId,
         status: r.status,
         detail: r.detail || '',
+        catatan: r.catatan || '',
         identitas: r.identitas || '',
         total_pendapatan: r.kalk ? r.kalk.totalPendapatan : '',
         total_pengeluaran: r.kalk ? r.kalk.totalPengeluaran : '',
         selisih: r.kalk ? r.kalk.selisih : '',
+        konfirmasi_awal: r.konfirmasiAwal || '',
+        konfirmasi_akhir: r.konfirmasiAkhir || '',
         waktu: new Date().toLocaleString('id-ID'),
       });
 
       log(`[${i + 1}/${target.length}] ${r.status}${r.detail ? ' — ' + r.detail : ''}`);
       if (r.identitas) log(`   ↳ ${r.identitas}`);
+      if (r.konfirmasiAwal || r.konfirmasiAkhir) {
+        log(`   ✓ konfirmasi: "${r.konfirmasiAwal || '-'}" → "${r.konfirmasiAkhir || '-'}"`);
+      }
       if (r.kalk) {
         log(`   ⇢ pendapatan ${r.kalk.totalPendapatan} - pengeluaran ${r.kalk.totalPengeluaran} = ${r.kalk.selisih}${r.kalk.minus ? ' (MINUS)' : ''}`);
       }

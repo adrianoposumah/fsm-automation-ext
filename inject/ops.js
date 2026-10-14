@@ -19,10 +19,71 @@
 
   const terlihat = (e) => e.getClientRects().length > 0;
 
+  // ---- Helper dialog Kirim (dipakai oleh akhirCatatan & kirimForm) ----
+  const cariTombolKirim = () => {
+    const bawah = document.getElementById('fasih-form-nav-submit-button');
+    if (bawah && terlihat(bawah)) return { el: bawah, dari: 'form-bawah' };
+    const navbar = [...document.querySelectorAll('button')].filter(
+      (b) => terlihat(b) && norm(b.textContent) === 'kirim' && !b.closest('aside') && !b.closest('[role="dialog"]'),
+    );
+    return navbar.length ? { el: navbar[0], dari: 'navbar-atas' } : null;
+  };
+
+  const cariDialogKirim = () => {
+    const ds = [...document.querySelectorAll('[role="dialog"]')].filter(terlihat);
+    return (
+      ds.find((d) => {
+        const t = d.querySelector('[id$="-title"]');
+        return t && norm(t.textContent) === 'kirim';
+      }) || null
+    );
+  };
+
+  const cariDialogKonfirmasiKirim = () => {
+    const ds = [...document.querySelectorAll('[role="dialog"]')].filter(terlihat);
+    return (
+      ds.find((d) => {
+        const t = d.querySelector('[id$="-title"]');
+        return t && norm(t.textContent) === 'konfirmasi kirim';
+      }) || null
+    );
+  };
+
+  const bacaRingkasanDialog = (dialog) => {
+    const kartu = [];
+    for (const b of dialog.querySelectorAll('button[type="button"]')) {
+      if (b.getAttribute('aria-label')) continue;
+      const spans = [...b.querySelectorAll('span')];
+      let label = '',
+        jumlah = null,
+        ket = '';
+      for (const s of spans) {
+        const cls = typeof s.className === 'string' ? s.className : '';
+        const txt = s.textContent.trim();
+        if (!txt) continue;
+        if (/uppercase/.test(cls) && !label) label = txt;
+        else if (/text-base/.test(cls) && jumlah === null && /^\d+$/.test(txt)) jumlah = parseInt(txt, 10);
+        else if (!ket && /text-\[10px\]/.test(cls)) ket = txt;
+      }
+      if (label && jumlah !== null) kartu.push({ label, jumlah, ket });
+    }
+    const judulEl = dialog.querySelector('[id$="-title"]');
+    const descEl = dialog.querySelector('[id$="-description"]');
+    return {
+      judul: judulEl ? judulEl.textContent.trim() : '',
+      deskripsi: descEl ? descEl.textContent.trim() : '',
+      kartu,
+    };
+  };
+
   const cariSemua = (sp) => {
     if (!sp) return [];
     if (sp.varId) {
-      return [...document.querySelectorAll('[id^="' + sp.varId + '#"]')]
+      const wadah = [...document.querySelectorAll('[id^="' + sp.varId + '#"]')];
+      const langsung = document.getElementById(sp.varId);
+      if (langsung) wadah.push(langsung);
+      return wadah
+        .filter((w, i, semua) => semua.indexOf(w) === i)
         .filter((w) => !sp.label || norm(w.textContent).includes(norm(sp.label)))
         .map((w) => w.querySelector(kontrol))
         .filter(Boolean);
@@ -165,7 +226,25 @@
         const n = h.parentElement && h.parentElement.closest('[id^="collapsible-"]');
         return !!n && (n.id === grupK.id || n.id === grupK.id + '-content');
       };
-      const daftar = (await tunggu(() => headers(grupK).filter(langsung), 5000)) || [];
+      // Item sidebar bisa dimuat bertahap setelah grup dibuka.
+      // Tunggu jumlah item stabil selama `msTenang` sebelum diambil.
+      const kumpulStabil = async (msTenang = 600, msMax = 6000) => {
+        const mulai = Date.now();
+        let terakhir = -1;
+        let waktuStabil = Date.now();
+        while (Date.now() - mulai < msMax) {
+          const n = headers(grupK).filter(langsung).length;
+          if (n !== terakhir) {
+            terakhir = n;
+            waktuStabil = Date.now();
+          } else if (n > 0 && Date.now() - waktuStabil >= msTenang) {
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 200));
+        }
+        return headers(grupK).filter(langsung);
+      };
+      const daftar = await kumpulStabil();
 
       const target = norm(a.nama);
       if (!target) return { ada: true, ok: false, total: daftar.length, pesan: 'nama usaha di Excel kosong' };
@@ -392,50 +471,6 @@
         return r && terlihat(r) ? r : null;
       };
 
-      const cariTombolKirim = () => {
-        const bawah = document.getElementById('fasih-form-nav-submit-button');
-        if (bawah && terlihat(bawah)) return { el: bawah, dari: 'form-bawah' };
-        const navbar = [...document.querySelectorAll('button')].filter((b) => terlihat(b) && norm(b.textContent) === 'kirim' && !b.closest('aside') && !b.closest('[role="dialog"]'));
-        return navbar.length ? { el: navbar[0], dari: 'navbar-atas' } : null;
-      };
-
-      const cariDialogKirim = () => {
-        const ds = [...document.querySelectorAll('[role="dialog"]')].filter(terlihat);
-        return (
-          ds.find((d) => {
-            const t = d.querySelector('[id$="-title"]');
-            return t && norm(t.textContent) === 'kirim';
-          }) || null
-        );
-      };
-
-      const bacaRingkasanDialog = (dialog) => {
-        const kartu = [];
-        for (const b of dialog.querySelectorAll('button[type="button"]')) {
-          if (b.getAttribute('aria-label')) continue;
-          const spans = [...b.querySelectorAll('span')];
-          let label = '',
-            jumlah = null,
-            ket = '';
-          for (const s of spans) {
-            const cls = typeof s.className === 'string' ? s.className : '';
-            const txt = s.textContent.trim();
-            if (!txt) continue;
-            if (/uppercase/.test(cls) && !label) label = txt;
-            else if (/text-base/.test(cls) && jumlah === null && /^\d+$/.test(txt)) jumlah = parseInt(txt, 10);
-            else if (!ket && /text-\[10px\]/.test(cls)) ket = txt;
-          }
-          if (label && jumlah !== null) kartu.push({ label, jumlah, ket });
-        }
-        const judulEl = dialog.querySelector('[id$="-title"]');
-        const descEl = dialog.querySelector('[id$="-description"]');
-        return {
-          judul: judulEl ? judulEl.textContent.trim() : '',
-          deskripsi: descEl ? descEl.textContent.trim() : '',
-          kartu,
-        };
-      };
-
       // 1) Buka sidebar CATATAN.
       const blok = await tunggu(() => headers(document).find((h) => judul(h) === norm(a.blok)), 8000);
       if (!blok) return { ok: false, pesan: `blok "${a.blok}" tidak ditemukan di sidebar` };
@@ -540,8 +575,7 @@
 
       const ringkasan = bacaRingkasanDialog(dialog);
 
-      // 5) Klik Batal (default) atau Kirim (kalau konfirmasiKirim aktif).
-      // 5) Kalau tahanDialog: biarkan dialog terbuka, tidak klik apa pun.
+      // 5) Mode inspeksi: biarkan dialog ringkasan terbuka.
       if (a.tahanDialog) {
         return {
           ok: true,
@@ -554,15 +588,55 @@
         };
       }
 
-      // 5b) Kalau tidak tahanDialog: klik Batal (default) atau Kirim.
+      // 5b) Klik Kirim pada dialog ringkasan.
       const btnBatal = [...dialog.querySelectorAll('button')].find((b) => !b.getAttribute('aria-label') && norm(b.textContent) === 'batal');
       const btnKonfirm = [...dialog.querySelectorAll('button')].find((b) => !b.getAttribute('aria-label') && norm(b.textContent) === 'kirim');
       const btnDismiss = dialog.querySelector('button[aria-label="Dismiss"]');
 
-      let dikonfirmasi = false;
       if (a.konfirmasiKirim && btnKonfirm) {
         btnKonfirm.click();
-        dikonfirmasi = true;
+        const dialogKonfirmasi = await tunggu(cariDialogKonfirmasiKirim, 5000);
+        if (!dialogKonfirmasi) {
+          return {
+            ok: false,
+            sebelum: statusSebelum,
+            sesudah: statusSesudah,
+            diubah,
+            dikirim: false,
+            dari: tombol.dari,
+            dialog: { ...ringkasan, dikonfirmasi: false, dibatalkan: false },
+            pesan: 'dialog Konfirmasi Kirim tidak muncul setelah tombol Kirim diklik',
+          };
+        }
+
+        const btnKonfirmasiFinal = [...dialogKonfirmasi.querySelectorAll('button')].find(
+          (b) => !b.getAttribute('aria-label') && norm(b.textContent) === 'konfirmasi',
+        );
+        if (!btnKonfirmasiFinal) {
+          return {
+            ok: false,
+            sebelum: statusSebelum,
+            sesudah: statusSesudah,
+            diubah,
+            dikirim: false,
+            dari: tombol.dari,
+            dialog: { ...ringkasan, konfirmasiKedua: true, dikonfirmasi: false, dibatalkan: false },
+            pesan: 'tombol Konfirmasi tidak ditemukan',
+          };
+        }
+
+        btnKonfirmasiFinal.click();
+        await tunggu(() => !cariDialogKonfirmasiKirim() && !cariDialogKirim(), 5000);
+        await new Promise((r) => setTimeout(r, 800));
+        return {
+          ok: true,
+          sebelum: statusSebelum,
+          sesudah: statusSesudah,
+          diubah,
+          dikirim: true,
+          dari: tombol.dari,
+          dialog: { ...ringkasan, konfirmasiKedua: true, dikonfirmasi: true, dibatalkan: false },
+        };
       } else if (btnBatal) {
         btnBatal.click();
       } else if (btnDismiss) {
@@ -579,9 +653,9 @@
         sebelum: statusSebelum,
         sesudah: statusSesudah,
         diubah,
-        dikirim: dikonfirmasi,
+        dikirim: false,
         dari: tombol.dari,
-        dialog: { ...ringkasan, dikonfirmasi, dibatalkan: !dikonfirmasi },
+        dialog: { ...ringkasan, dikonfirmasi: false, dibatalkan: true },
       };
     },
     async cek(a) {
@@ -590,13 +664,68 @@
     async isi(a) {
       return cekAtauIsi(a, true);
     },
+
+    async catatanField(a) {
+      // a.varId, a.teks, a.simpan
+      if (!a || !a.varId) return { ok: false, pesan: 'varId tidak diberikan' };
+      let w = [...document.querySelectorAll('[id^="' + a.varId + '#"]')].filter(terlihat);
+      if (!w.length) {
+        const el = document.getElementById(a.varId);
+        if (el && terlihat(el)) w = [el];
+      }
+      if (!w.length) return { ok: false, pesan: `field ${a.varId} tidak ditemukan` };
+      if (w.length > 1) return { ok: false, pesan: `field ${a.varId} ambigu (${w.length})` };
+      const inp = w[0].querySelector(kontrol);
+      if (!inp) return { ok: false, pesan: `input ${a.varId} tidak ditemukan` };
+      return bukaDialogCatatan(inp, a.varId, a.teks, !!a.simpan, w[0]);
+    },
+
+    async kirimForm(a) {
+      // a.kirim: true = klik tombol Kirim di dalam dialog (MENYIMPAN)
+      //          false = klik Batal (dry-run, tidak menyimpan)
+      const tombol = await tunggu(cariTombolKirim, 5000);
+      if (!tombol) return { ok: false, pesan: 'tombol Kirim tidak ditemukan' };
+
+      tombol.el.click();
+      const dialog = await tunggu(cariDialogKirim, 6000);
+      if (!dialog) return { ok: false, pesan: 'dialog konfirmasi tidak muncul', dari: tombol.dari };
+
+      const ringkasan = bacaRingkasanDialog(dialog);
+      const btnBatal = [...dialog.querySelectorAll('button')].find((b) => !b.getAttribute('aria-label') && norm(b.textContent) === 'batal');
+      const btnKonfirm = [...dialog.querySelectorAll('button')].find((b) => !b.getAttribute('aria-label') && norm(b.textContent) === 'kirim');
+      const btnDismiss = dialog.querySelector('button[aria-label="Dismiss"]');
+
+      let dikonfirmasi = false;
+      if (a.kirim && btnKonfirm) {
+        btnKonfirm.click();
+        dikonfirmasi = true;
+      } else if (btnBatal) {
+        btnBatal.click();
+      } else if (btnDismiss) {
+        btnDismiss.click();
+      } else {
+        dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      }
+
+      await tunggu(() => !cariDialogKirim(), 5000);
+      await new Promise((r) => setTimeout(r, 800));
+
+      return {
+        ok: true,
+        dikonfirmasi,
+        dari: tombol.dari,
+        ringkasan: { ...ringkasan, dikonfirmasi, dibatalkan: !dikonfirmasi },
+      };
+    },
   };
 
   // ---- Catatan dry-run ----
   // Klik tombol "Catatan" di field, isi textarea, tutup dialog. TIDAK klik Simpan.
-  async function bukaDialogCatatan(el, varId, teks) {
+  async function bukaDialogCatatan(el, varId, teks, simpan, wadahField) {
     // Cari kontainer pertanyaan terkini (mungkin sudah re-render setelah input).
-    let root = varId ? el.closest('[id^="' + varId + '#"]') : null;
+    let root = wadahField && terlihat(wadahField) ? wadahField : null;
+    if (!root && varId) root = el.closest('[id^="' + varId + '#"]');
+    if (!root && varId) root = document.getElementById(varId);
     if (!root && varId) {
       const semua = [...document.querySelectorAll('[id^="' + varId + '#"]')].filter(terlihat);
       if (semua.length === 1) root = semua[0];
@@ -639,10 +768,18 @@
     const tertahan = String(ta.value) === String(teks);
     ta.style.outline = '';
 
-    // JANGAN klik tombol Simpan/kirim. Tutup dialog saja.
+    if (simpan) {
+      const btnSimpan = dialog.querySelector('button[title="Simpan"]');
+      if (btnSimpan) {
+        btnSimpan.click();
+        await tunggu(() => !dialog.hasAttribute('data-expanded'), 3000);
+        return { ok: tertahan, tertahan, teks, dikirim: true };
+      }
+    }
+
     await tutupDialog(dialog);
 
-    return { ok: tertahan, tertahan, teks };
+    return { ok: tertahan, tertahan, teks, dikirim: false };
   }
 
   async function tutupDialog(dialog) {
@@ -732,7 +869,7 @@
       // ---- catatan dry-run: hanya kalau mode isi dan ada konfigurasi ----
       if (a.catatan && a.catatan.aktif && a.catatan.teks) {
         try {
-          out[k].catatan = await bukaDialogCatatan(el, sp.varId, a.catatan.teks);
+          out[k].catatan = await bukaDialogCatatan(el, sp.varId, a.catatan.teks, !!a.catatan.simpan);
         } catch (e) {
           out[k].catatan = { ok: false, pesan: 'error: ' + (e && e.message) };
         }

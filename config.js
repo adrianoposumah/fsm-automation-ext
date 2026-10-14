@@ -131,38 +131,69 @@ const BLOKS = {
     kalkulasiSkip: true, // ikut perhitungan pendapatan - pengeluaran
   },
 
+  'blok1-keluarga': {
+    judul: 'L BLOK I — Keterangan Anggota Keluarga',
+    sidebar: {
+      blok: 'SE2026 - L BLOK I',
+      grup: 'Keterangan Anggota Keluarga',
+      item: {
+        kolomExcel: 'nama_nik',
+        cocok: 'longgar',
+        wajibTepat: 1,
+      },
+    },
+    identitas: { varId: 'nama_dtsen', label: 'Nama anggota' },
+    // field yang dipakai untuk validasi (bukan diinput):
+    fields: {
+      'NIK anggota': { varId: 'nik_dtsen', label: 'NIK', tipe: 'teks', kolom: [] },
+      'Nama anggota': { varId: 'nama_dtsen', label: 'Nama', tipe: 'teks', kolom: [] },
+    },
+    kalkulasiSkip: false,
+  },
+
   'blokP-kk': {
-    judul: 'Update KK (Blok P)',
+    judul: 'Update & Validasi KK (Blok P)',
     sidebar: {
       blok: 'SE2026 - P',
       grup: null,
-      item: null, // tidak ada pemilihan item — buka blok langsung tampil form
+      item: null, // tidak ada pemilihan item
     },
-    identitas: {
-      varId: 'nama_kk',
-      label: 'Nama KK',
-    },
+    identitas: { varId: 'nama_kk', label: 'Nama KK' },
+    // Field yang diinput (dipakai mode kk-update):
     fields: {
       'Nomor KK': {
         varId: 'no_kk',
         label: 'Nomor KK',
         tipe: 'teks',
-        kolom: ['no_kk', 'nomor_kk', 'nomor kk'],
-      },
-      NIK: {
-        varId: 'nik',
-        label: 'NIK',
-        tipe: 'teks',
-        kolom: ['nik'],
-      },
-      'Nama KK': {
-        varId: 'nama_kk',
-        label: 'Nama Kepala Keluarga',
-        tipe: 'teks',
-        kolom: ['nama_kk', 'nama kepala keluarga', 'nama kk'],
+        kolom: ['kk_usul', 'KK usul', 'no_kk_usul'],
       },
     },
-    kalkulasiSkip: false, // Blok P tidak ikut kalkulasi skip-minus
+    // Kolom Excel untuk validasi (tidak diinput):
+    validasi: {
+      nik: { varId: 'nik', kolom: ['nik_usul', 'NIK usul'], label: 'NIK', cocok: 'ketat' },
+      nama: { varId: 'nama_kk', kolom: ['nama_nik', 'nama NIK'], label: 'Nama', cocok: 'longgar' },
+    },
+    // Kolom Excel untuk info (hanya dicatat di log):
+    info: {
+      no_kk_awal: { kolom: ['no_kk'], label: 'No KK awal' },
+      konfirmasi: { kolom: ['konfirmasi'], label: 'Konfirmasi (1/2/3)' },
+    },
+    kalkulasiSkip: false,
+    // Catatan kode + kirim pembaruan setelah no_kk diproses.
+    //   kodeBerubah : teks catatan kalau no_kk BERUBAH (baru saja diisi)
+    //   kodeTetap   : teks catatan kalau no_kk TIDAK berubah (sudah sesuai)
+    //   kirimCatatan: true = klik tombol "Simpan" di dialog Catatan (kirim catatan)
+    //                 false = isi textarea lalu tutup tanpa kirim (dry-run)
+    //   kirimPembaruan: true = klik "Kirim", lalu "Konfirmasi" pada dialog kedua
+    //                   (SIMPAN perubahan dan lanjut ke baris berikutnya)
+    //                   false = buka dialog Kirim lalu tahan tetap terbuka (dry-run)
+    catatanKK: {
+      aktif: true,
+      kodeBerubah: '#DC_03',
+      kodeTetap: '#DC_00',
+      kirimCatatan: true,
+      kirimPembaruan: true,
+    },
   },
 };
 
@@ -193,14 +224,9 @@ const MODES = {
     aksi: 'isi',
     blok: 'blok2-usaha',
   },
-  'cek-kk': {
-    judul: 'Cek field KK — Blok P (tidak mengubah)',
-    aksi: 'cek',
-    blok: 'blokP-kk',
-  },
-  'isi-kk': {
-    judul: 'Isi KK tanpa simpan — Blok P',
-    aksi: 'isi',
+  'kk-update': {
+    judul: 'Update & Validasi KK — Blok P',
+    aksi: 'kk',
     blok: 'blokP-kk',
   },
 };
