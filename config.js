@@ -41,7 +41,7 @@ const CONFIG = {
   // sebelum baris berikutnya diproses. Berguna supaya SPA menutup dialog /
   // menyelesaikan animasi sebelum navigasi berikutnya.
   // Jitter hanya MENAMBAH (0–1× nilai) supaya tidak terlalu teratur.
-  JEDA_ANTAR_BARIS_S: 2,
+  JEDA_ANTAR_BARIS_S: 3,
 
   // Kalkulasi total & skip jika minus.
   //   pengeluaran = gaji + biaya_produksi + biaya_pembelian + operasional + non_operasional
@@ -130,6 +130,67 @@ const BLOKS = {
       },
     },
     kalkulasiSkip: true, // ikut perhitungan pendapatan - pengeluaran
+  },
+
+  // [BARU] Blok II per flag: nilai hanya diinput bila kolom flag-nya = 1.
+  'blok2-usaha-flag': {
+    judul: 'Update Usaha per Flag (Blok II)',
+    sidebar: {
+      blok: 'SE2026 - L BLOK II',
+      grup: 'Keterangan Usaha/Perusahaan',
+      item: {
+        kolomExcel: 'nama_usaha',
+        cocok: 'longgar',
+        wajibTepat: 1,
+      },
+    },
+    identitas: {
+      varId: 'nama_komersial',
+      label: 'Nama komersial',
+    },
+    // kolom   = tebakan awal kolom NILAI di Excel (huruf kecil)
+    // flagKolom = tebakan awal kolom FLAG di Excel (huruf kecil)
+    // label tidak diisi untuk 3 field di bawah karena teks aslinya di halaman belum diketahui
+    // (label opsional; bila diisi, harus ada di teks kontainer field). Isi setelah diverifikasi di halaman.
+    fields: {
+      'Biaya Produksi': {
+        varId: 'biaya_produksi',
+        label: 'Biaya produksi',
+        tipe: 'angka',
+        kolom: ['biaya_produksi'],
+        flagKolom: ['biaya_produksi_flag'],
+      },
+      'Biaya Non Operasional': {
+        varId: 'non_operasional',
+        tipe: 'angka',
+        kolom: ['biaya_non_operasional'],
+        flagKolom: ['biaya_non_operasional_flag'],
+      },
+      'Pendapatan Barang Jasa': {
+        varId: 'nilai_pendapatan',
+        tipe: 'angka',
+        kolom: ['pendapatan_barang_jasa'],
+        flagKolom: ['pendapatan_barang_jasa_flag', 'pendapatan_barang_jas_flag'],
+      },
+      'Pendapatan Lainnya': {
+        varId: 'pendapatan_lain',
+        tipe: 'angka',
+        kolom: ['pendapatan_lainnya'],
+        flagKolom: ['pendapatan_lainnya_flag'],
+      },
+    },
+    kalkulasiSkip: true, // ikut perhitungan pendapatan - pengeluaran (CONFIG.KALKULASI_SKIP)
+    // Penanda mode flag + pengaturannya.
+    flag: {
+      nilaiAktif: ['1'], // nilai sel flag yang dianggap aktif (angka 1.0 juga dikenali)
+      catatanKolom: ['catatan'], // tebakan awal dropdown "Kolom catatan"
+      catatanWajib: true, // true = baris dilewati bila teks catatan kosong
+      catatanJikaSama: false, // true = tetap menulis catatan walau nilai halaman sudah sama
+      simpanCatatan: true, // true = klik "Simpan" di dialog Catatan (MENYIMPAN catatan)
+      kirimPembaruan: true, // true = klik "Kirim" lalu "Konfirmasi" (MENYIMPAN perubahan)
+      // [BARU] true = assignment_link langsung ke halaman detail (ada tombol Edit); lewati pencarian tombol Review.
+      linkLangsung: true,
+    },
   },
 
   'blok1-keluarga': {
@@ -233,6 +294,11 @@ const MODES = {
     judul: 'Isi usaha tanpa simpan — Blok II',
     aksi: 'isi',
     blok: 'blok2-usaha',
+  },
+  'isi-usaha-flag': {
+    judul: 'Isi usaha per flag — Blok II (kolom custom)',
+    aksi: 'isi',
+    blok: 'blok2-usaha-flag',
   },
   'kk-update': {
     judul: 'Update & Validasi KK — Blok P',

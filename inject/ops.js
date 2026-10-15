@@ -923,6 +923,9 @@
       const biasa = el.tagName !== 'SELECT' && el.type !== 'checkbox';
       const baru = modeAngka ? angka(mentah) : String(mentah).trim();
       out[k].lama = String(el.value || '').slice(0, 60);
+      // [BARU] bentuk ternormalisasi untuk log perubahan (null bila tidak bisa dinormalkan / bukan field angka)
+      out[k].lamaAngka = modeAngka ? angka(el.value) : null;
+      out[k].baruAngka = modeAngka ? baru : null;
       if (mentah === undefined || mentah === null || String(mentah).trim() === '') {
         out[k].diisi = false;
         out[k].alasan = 'sel kosong';
@@ -949,7 +952,10 @@
       }
 
       // ---- catatan dry-run: hanya kalau mode isi dan ada konfigurasi ----
-      if (a.catatan && a.catatan.aktif && a.catatan.teks) {
+      // [BARU] hanyaJikaBerhasil: catatan hanya untuk field yang benar-benar terisi
+      // (atau sudah sama bila jikaSama true). Tanpa flag ini perilaku lama dipertahankan.
+      const bolehCatatan = !a.catatan || !a.catatan.hanyaJikaBerhasil || out[k].diisi || (out[k].sama && a.catatan.jikaSama);
+      if (a.catatan && a.catatan.aktif && a.catatan.teks && bolehCatatan) {
         try {
           out[k].catatan = await bukaDialogCatatan(el, sp.varId, a.catatan.teks, !!a.catatan.simpan);
         } catch (e) {

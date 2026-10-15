@@ -86,7 +86,7 @@ function pasangPanel() {
   $('btnLog').onclick = () => {
     if (!hasil.length) return log('Belum ada hasil.');
     const wb = XLSX.utils.book_new();
-    const kolom = ['baris_excel', 'link', 'mode', 'status', 'detail', 'catatan', 'identitas', 'total_pendapatan', 'total_pengeluaran', 'selisih', 'konfirmasi_awal', 'konfirmasi_akhir', 'waktu'];
+    const kolom = ['baris_excel', 'link', 'nama_usaha', 'mode', 'status', 'detail', 'perubahan', 'catatan', 'identitas', 'total_pendapatan', 'total_pengeluaran', 'selisih', 'konfirmasi_awal', 'konfirmasi_akhir', 'waktu'];
     const data = hasil.map((baris) => Object.fromEntries(kolom.map((k) => [k, baris[k] ?? ''])));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data, { header: kolom }), 'log');
     XLSX.writeFile(wb, `log_${Date.now()}.xlsx`);
@@ -214,6 +214,67 @@ function renderKolomUpdate() {
 
     $('kolomUsaha').disabled = true;
     $('kecocokan').disabled = true;
+    return;
+  }
+
+  // [BARU] ── Mode flag: per field = dropdown kolom nilai + dropdown kolom flag; satu dropdown kolom catatan. Tanpa checkbox ──
+  if (blok.flag) {
+    const opsiKol = `<option value="">(pilih kolom)</option>` + kolom.map((k) => `<option value="${esc(k)}">${esc(k)}</option>`).join('');
+    const cari = (tebakan) => {
+      const t = (tebakan || []).map((x) => x.toLowerCase());
+      return kolom.find((k) => t.includes(k.trim().toLowerCase())) || '';
+    };
+    const contoh = (kol) => {
+      if (!kol) return '';
+      const b = rows.find((r) => String(r[kol] ?? '').trim() !== '');
+      if (!b) return '(kosong)';
+      const v = String(b[kol]);
+      return `contoh: "${v.length > 30 ? v.slice(0, 30) + '…' : v}"`;
+    };
+
+    const barisField = Object.keys(blok.fields)
+      .map(
+        (nama) =>
+          `<div class="field-row">` +
+          `<span>${esc(nama)}</span>` +
+          `<select data-k="${esc(nama)}" title="Kolom nilai">${opsiKol}</select>` +
+          `<select data-flag="${esc(nama)}" title="Kolom flag (diinput hanya bila = 1)">${opsiKol}</select>` +
+          `<small class="pratinjau" data-info="${esc(nama)}"></small>` +
+          `</div>`,
+      )
+      .join('');
+    const barisCatatan = `<div class="field-row"><span>Kolom catatan</span><select data-catatan="1">${opsiKol}</select><small class="pratinjau" data-info="catatan"></small></div>`;
+    $('kolomUpdate').innerHTML = barisField + barisCatatan;
+
+    const perbarui = (sel, kunci) => {
+      const el = [...$('kolomUpdate').querySelectorAll('small.pratinjau')].find((s) => s.dataset.info === kunci);
+      if (el) el.textContent = contoh(sel.value);
+    };
+    $('kolomUpdate')
+      .querySelectorAll('select')
+      .forEach((sel) => {
+        let tebakan;
+        let kunci = null; // kunci pratinjau (hanya kolom nilai dan catatan yang punya pratinjau)
+        if (sel.dataset.k !== undefined) {
+          tebakan = blok.fields[sel.dataset.k].kolom;
+          kunci = sel.dataset.k;
+        } else if (sel.dataset.flag !== undefined) {
+          tebakan = blok.fields[sel.dataset.flag].flagKolom;
+        } else {
+          tebakan = blok.flag.catatanKolom;
+          kunci = 'catatan';
+        }
+        const ketemu = cari(tebakan);
+        if (ketemu) sel.value = ketemu;
+        if (kunci) {
+          perbarui(sel, kunci);
+          sel.addEventListener('change', () => perbarui(sel, kunci));
+        }
+      });
+
+    // Mode ini memilih item (usaha) di sidebar seperti Blok II lainnya.
+    $('kolomUsaha').disabled = false;
+    $('kecocokan').disabled = false;
     return;
   }
 
