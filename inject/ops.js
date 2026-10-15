@@ -23,9 +23,7 @@
   const cariTombolKirim = () => {
     const bawah = document.getElementById('fasih-form-nav-submit-button');
     if (bawah && terlihat(bawah)) return { el: bawah, dari: 'form-bawah' };
-    const navbar = [...document.querySelectorAll('button')].filter(
-      (b) => terlihat(b) && norm(b.textContent) === 'kirim' && !b.closest('aside') && !b.closest('[role="dialog"]'),
-    );
+    const navbar = [...document.querySelectorAll('button')].filter((b) => terlihat(b) && norm(b.textContent) === 'kirim' && !b.closest('aside') && !b.closest('[role="dialog"]'));
     return navbar.length ? { el: navbar[0], dari: 'navbar-atas' } : null;
   };
 
@@ -197,6 +195,31 @@
       const b = (await tunggu(() => [...document.querySelectorAll(a.css)], a.ms)) || [];
       if (b.length === 1) b[0].click();
       return { jumlah: b.length };
+    },
+
+    async revoke(a) {
+      const cari = () => [...document.querySelectorAll('button')].filter((b) => terlihat(b) && [...b.querySelectorAll('svg')].some((svg) => svg.classList.contains('tabler-icon-rotate-clockwise')));
+      const tombol = (await tunggu(cari, a.ms)) || [];
+      if (tombol.length !== 1) return { jumlah: tombol.length, dikonfirmasi: false };
+      tombol[0].focus();
+      tombol[0].click();
+
+      const dialog = await tunggu(() => {
+        const ds = [...document.querySelectorAll('[role="alertdialog"]')].filter(terlihat);
+        return (
+          ds.find((d) => {
+            const t = d.querySelector('[id$="-title"], [id$="-label"], h2');
+            return t && norm(t.textContent) === 'revoke assignment?';
+          }) || null
+        );
+      }, 5000);
+      if (!dialog) return { jumlah: 1, dikonfirmasi: false, pesan: 'dialog Revoke tidak muncul' };
+
+      const konfirmasi = [...dialog.querySelectorAll('button')].find((b) => !b.getAttribute('aria-label') && norm(b.textContent) === 'konfirmasi');
+      if (!konfirmasi) return { jumlah: 1, dikonfirmasi: false, pesan: 'tombol Konfirmasi Revoke tidak ditemukan' };
+
+      konfirmasi.click();
+      return { jumlah: 1, dikonfirmasi: true };
     },
 
     async usaha(a) {
@@ -593,6 +616,24 @@
       const btnKonfirm = [...dialog.querySelectorAll('button')].find((b) => !b.getAttribute('aria-label') && norm(b.textContent) === 'kirim');
       const btnDismiss = dialog.querySelector('button[aria-label="Dismiss"]');
 
+      // [BARU] Konfirmasi diminta tetapi tombol Kirim di dialog tidak ada / disabled → gagal, bukan "dry-run".
+      if (a.konfirmasiKirim && (!btnKonfirm || btnKonfirm.disabled)) {
+        const daftarTombol = [...dialog.querySelectorAll('button')].map((b) => norm(b.textContent) || b.getAttribute('aria-label') || '(tanpa teks)');
+        if (btnBatal) btnBatal.click();
+        else if (btnDismiss) btnDismiss.click();
+        await tunggu(() => !cariDialogKirim(), 5000);
+        return {
+          ok: false,
+          sebelum: statusSebelum,
+          sesudah: statusSesudah,
+          diubah,
+          dikirim: false,
+          dari: tombol.dari,
+          dialog: { ...ringkasan, dikonfirmasi: false, dibatalkan: true },
+          pesan: (btnKonfirm ? 'tombol Kirim di dialog disabled' : 'tombol Kirim di dialog tidak ditemukan') + '; tombol: ' + daftarTombol.join(' | '),
+        };
+      }
+
       if (a.konfirmasiKirim && btnKonfirm) {
         btnKonfirm.click();
         const dialogKonfirmasi = await tunggu(cariDialogKonfirmasiKirim, 5000);
@@ -609,9 +650,7 @@
           };
         }
 
-        const btnKonfirmasiFinal = [...dialogKonfirmasi.querySelectorAll('button')].find(
-          (b) => !b.getAttribute('aria-label') && norm(b.textContent) === 'konfirmasi',
-        );
+        const btnKonfirmasiFinal = [...dialogKonfirmasi.querySelectorAll('button')].find((b) => !b.getAttribute('aria-label') && norm(b.textContent) === 'konfirmasi');
         if (!btnKonfirmasiFinal) {
           return {
             ok: false,
@@ -677,7 +716,7 @@
       if (w.length > 1) return { ok: false, pesan: `field ${a.varId} ambigu (${w.length})` };
       const inp = w[0].querySelector(kontrol);
       if (!inp) return { ok: false, pesan: `input ${a.varId} tidak ditemukan` };
-      return bukaDialogCatatan(inp, a.varId, a.teks, !!a.simpan, w[0]);
+      return bukaDialogCatatan(inp, a.varId, a.teks, !!a.simpan, w[0], a); // [UBAH] a.lewatJika dipakai di dalam
     },
 
     async kirimForm(a) {
@@ -721,7 +760,33 @@
 
   // ---- Catatan dry-run ----
   // Klik tombol "Catatan" di field, isi textarea, tutup dialog. TIDAK klik Simpan.
-  async function bukaDialogCatatan(el, varId, teks, simpan, wadahField) {
+
+  // [BARU] Baca riwayat catatan di dialog Catatan (urut lama → baru).
+  function bacaRiwayat(dialog) {
+    const out = [];
+    let tanggal = '';
+    const sel = 'span[class*="rounded-full"], div[class*="w-full"][class*="items-start"][class*="gap-3"]';
+    for (const el of dialog.querySelectorAll(sel)) {
+      if (el.tagName === 'SPAN') {
+        tanggal = el.textContent.trim();
+        continue;
+      }
+      const av = el.querySelector('div[title]');
+      const isi = el.querySelector('[class*="whitespace-pre-wrap"]');
+      if (!av || !isi) continue;
+      const jam = [...el.querySelectorAll('span')].map((s) => s.textContent.trim()).find((t) => /^\d{1,2}:\d{2}$/.test(t)) || '';
+      out.push({
+        pengirim: av.getAttribute('title') || '',
+        milikSendiri: /flex-row-reverse/.test(el.className),
+        tanggal,
+        jam,
+        teks: isi.textContent.trim(),
+      });
+    }
+    return out;
+  }
+
+  async function bukaDialogCatatan(el, varId, teks, simpan, wadahField, opsi) {
     // Cari kontainer pertanyaan terkini (mungkin sudah re-render setelah input).
     let root = wadahField && terlihat(wadahField) ? wadahField : null;
     if (!root && varId) root = el.closest('[id^="' + varId + '#"]');
@@ -755,6 +820,23 @@
       return { ok: false, pesan: 'textarea catatan tidak ditemukan' };
     }
 
+    // Cek riwayat catatan sebelum menulis. Pesan terakhir dari SIAPA PUN
+    // (diri sendiri atau user lain) yang cocok dengan `lewatJika` → tulis dilewati.
+    await tunggu(() => bacaRiwayat(dialog).length, 1200);
+    const riwayat = bacaRiwayat(dialog);
+    const terakhir = riwayat.length ? riwayat[riwayat.length - 1] : null;
+    if (opsi && Array.isArray(opsi.lewatJika) && terakhir && opsi.lewatJika.includes(terakhir.teks)) {
+      await tutupDialog(dialog);
+      return {
+        ok: true,
+        dilewati: true,
+        dilewatiDari: terakhir.milikSendiri ? 'sendiri' : 'orang-lain',
+        teks,
+        terakhir,
+        jumlahRiwayat: riwayat.length,
+      };
+    }
+
     ta.style.outline = '3px solid #2563eb';
     if (ta.scrollIntoView) ta.scrollIntoView({ block: 'center' });
     if (ta.focus) ta.focus();
@@ -773,13 +855,13 @@
       if (btnSimpan) {
         btnSimpan.click();
         await tunggu(() => !dialog.hasAttribute('data-expanded'), 3000);
-        return { ok: tertahan, tertahan, teks, dikirim: true };
+        return { ok: tertahan, tertahan, teks, dikirim: true, terakhir }; // [UBAH]
       }
     }
 
     await tutupDialog(dialog);
 
-    return { ok: tertahan, tertahan, teks, dikirim: false };
+    return { ok: tertahan, tertahan, teks, dikirim: false, terakhir }; // [UBAH]
   }
 
   async function tutupDialog(dialog) {

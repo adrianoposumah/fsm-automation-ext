@@ -11,6 +11,44 @@ function gabung(daftar) {
 }
 const jumlahDari = (r) => r.reduce((s, x) => s + (x.jumlah || 0), 0);
 
+// [BARU] Satu aturan kode catatan untuk semua jalur: lengkap → DC_03, tidak lengkap → DC_00.
+function kodeKK(cfg, lengkap) {
+  if (!cfg || !cfg.aktif) return '';
+  return lengkap ? cfg.kodeLengkap || '#DC_03' : cfg.kodeTidakLengkap || '#DC_00';
+}
+
+// [BARU] Teks ringkas hasil catatan untuk kolom detail log.
+function teksCatatan(catat) {
+  if (!catat) return '';
+  if (!catat.ok) return `; catatan GAGAL: ${catat.pesan || '?'}`;
+  const t = catat.terakhir;
+  const infoT = t ? `"${t.teks}" oleh ${t.pengirim}${t.tanggal ? ', ' + t.tanggal + ' ' + t.jam : ''}` : '';
+  if (catat.dilewati) {
+    const dari = catat.dilewatiDari === 'orang-lain' ? ' oleh user lain' : '';
+    return `; catatan "${catat.teks}" DILEWATI (terakhir${dari}: ${infoT || '?'})`;
+  }
+  return `; catatan "${catat.teks}"${catat.dikirim ? ' DIKIRIM' : ' terisi (tidak dikirim)'}${infoT ? ` (sebelumnya: ${infoT})` : ''}`;
+}
+
+// [BARU] Tulis catatan no_kk dengan pengecekan riwayat (satu pintu untuk semua cabang alurKK).
+async function catatKK(kode, cfg) {
+  if (!kode || !cfg) return null;
+  try {
+    return (
+      (
+        await jalankanDiTab('catatanField', {
+          varId: 'no_kk',
+          teks: kode,
+          simpan: !!cfg.kirimCatatan,
+          lewatJika: (cfg.lewatJika && cfg.lewatJika[kode]) || null,
+        })
+      ).find((x) => x && x.ok !== undefined) || null
+    );
+  } catch (e) {
+    return { ok: false, pesan: 'error: ' + (e && e.message) };
+  }
+}
+
 async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
   const blok = opsi.blok;
   if (!blok) return { status: 'PERLU CEK MANUAL: blok tidak dikenal' };
@@ -210,6 +248,9 @@ async function alurKK(baris, link, petaKK, limiter) {
   const kkUsul = excel('kk_usul');
   const nikUsul = excel('nik_usul');
   const namaNIKExcel = excel('nama_nik');
+  const dataKKLengkap = !!nikUsul && !!namaNIKExcel && !!kkUsul;
+  const kodeCatatan = kodeKK(blokP.catatanKK, dataKKLengkap); // [BARU] dipakai semua cabang di bawah
+  let validasiIdentitasTertunda = false;
 
   const konfAwal = konfirmasiAwalRaw || '1. Belum diperbaiki';
 
@@ -264,20 +305,27 @@ async function alurKK(baris, link, petaKK, limiter) {
         konfirmasiAwal: konfAwal,
         konfirmasiAkhir: konfAwal,
       };
-    if (!ru1.ok)
-      return {
-        status: `PERLU CEK MANUAL: L BLOK I — ${ru1.pesan || 'tidak bisa dibuka'}`,
-        konfirmasiAwal: konfAwal,
-        konfirmasiAkhir: '3. Tidak diperbaiki',
-      };
+    if (!ru1.ok) {
+      if (!dataKKLengkap)
+        return {
+          status: `PERLU CEK MANUAL: L BLOK I — ${ru1.pesan || 'tidak bisa dibuka'}`,
+          konfirmasiAwal: konfAwal,
+          konfirmasiAkhir: '3. Tidak diperbaiki',
+        };
+      // Assignment approved dapat menyembunyikan item Blok I sebelum Revoke.
+      // Tunda validasi identitas agar alur dapat menarik assignment terlebih dahulu.
+      validasiIdentitasTertunda = true;
+    }
 
-    await new Promise((r) => setTimeout(r, 500));
+    if (!validasiIdentitasTertunda) await new Promise((r) => setTimeout(r, 500));
 
     // 6) Baca nik_dtsen & nama_dtsen
-    const rNilai1 = (await jalankanDiTab('bacaIdentitas', { varId: ['nik_dtsen', 'nama_dtsen'] })).find((x) => x.utama);
-    const nilai1 = rNilai1 ? rNilai1.nilai : {};
-    nikH = String(nilai1.nik_dtsen ?? '').trim();
-    namaH = String(nilai1.nama_dtsen ?? '').trim();
+    if (!validasiIdentitasTertunda) {
+      const rNilai1 = (await jalankanDiTab('bacaIdentitas', { varId: ['nik_dtsen', 'nama_dtsen'] })).find((x) => x.utama);
+      const nilai1 = rNilai1 ? rNilai1.nilai : {};
+      nikH = String(nilai1.nik_dtsen ?? '').trim();
+      namaH = String(nilai1.nama_dtsen ?? '').trim();
+    }
   }
 
   const teksIdn = `Anggota: "${namaH || '(kosong)'}" (NIK ${nikH || '-'})`;
@@ -287,7 +335,7 @@ async function alurKK(baris, link, petaKK, limiter) {
   const identitasExcelLengkap = !!nikUsul && !!namaNIKExcel;
   const nikCocok = identitasExcelLengkap && nikH === nikUsul;
   const namaCocok = identitasExcelLengkap && namaH.toLowerCase() === namaNIKExcel.toLowerCase();
-  if (identitasExcelLengkap && (!nikCocok || !namaCocok))
+  if (identitasExcelLengkap && !validasiIdentitasTertunda && (!nikCocok || !namaCocok))
     return {
       status: `DILEWATI: validasi gagal (NIK ${nikCocok ? 'OK' : 'BEDA'}, nama ${namaCocok ? 'OK' : 'BEDA'})`,
       detail: detailValidasi,
@@ -297,69 +345,45 @@ async function alurKK(baris, link, petaKK, limiter) {
     };
 
   // 8) Cek tombol Edit
-  const nEdit = jumlahDari(await jalankanDiTab('hitung', { css: CONFIG.EDIT_CSS, ms: 5000 }));
+  let nEdit = jumlahDari(await jalankanDiTab('hitung', { css: CONFIG.EDIT_CSS, ms: 5000 }));
 
-  // 9) Tanpa tombol Edit — tetap validasi no_kk dan catat hasil kelengkapan Excel.
+  // 9) Jika tidak ada tombol Edit (mis. assignment approved), tarik (revoke)
+  // terlebih dahulu agar tombol Edit muncul.
   if (nEdit === 0) {
     await limiter.tunggu('filter');
-    const rBlokP = (
-      await jalankanDiTab('bukaBlok', {
-        blok: blokP.sidebar.blok,
-        fieldVarIds: ['no_kk'],
-      })
-    ).find((x) => x && x.ada);
-    if (!rBlokP || !rBlokP.ada)
+    const siapRefresh = tungguTab(workTabId, 15000).catch(() => null);
+    const revoke = await jalankanDiTab('revoke', {
+      css: CONFIG.REVOKE_CSS,
+      ms: 10000,
+    });
+    const hasilRevoke = revoke.find((x) => x && x.jumlah !== undefined);
+    if (!hasilRevoke || hasilRevoke.jumlah !== 1 || !hasilRevoke.dikonfirmasi)
       return {
-        status: 'PERLU CEK MANUAL: Blok P tidak ditemukan tanpa tombol Edit',
-        detail: detailValidasi,
+        status: 'PERLU CEK MANUAL: tombol Edit tidak ada dan Revoke tidak berhasil',
+        detail: (hasilRevoke && hasilRevoke.pesan ? hasilRevoke.pesan + ' | ' : '') + detailValidasi,
         konfirmasiAwal: konfAwal,
         konfirmasiAkhir: konfAwal,
         identitas: teksIdn,
       };
-    await new Promise((r) => setTimeout(r, 500));
+    await siapRefresh;
 
-    const rNoKK = (await jalankanDiTab('bacaIdentitas', { varId: ['no_kk'] })).find((x) => x.utama);
-    const noKKH = String((rNoKK && rNoKK.nilai && rNoKK.nilai.no_kk) || '').trim();
-    const cfg = blokP.catatanKK;
-    const kodeCatatan = cfg && cfg.aktif ? (nikUsul && namaNIKExcel && kkUsul ? cfg.kodeBerubah || '#DC_03' : cfg.kodeTetap || '#DC_00') : '';
-    let catat = null;
-    if (kodeCatatan) {
-      try {
-        catat = (await jalankanDiTab('catatanField', {
-          varId: 'no_kk',
-          teks: kodeCatatan,
-          simpan: !!cfg.kirimCatatan,
-        })).find((x) => x && x.ok !== undefined);
-      } catch (e) {
-        catat = { ok: false, pesan: 'error: ' + (e && e.message) };
-      }
-    }
-    const catatTxt = catat
-      ? catat.ok
-        ? `; catatan "${catat.teks}"${catat.dikirim ? ' DIKIRIM' : ' terisi (tidak dikirim)'}`
-        : `; catatan GAGAL: ${catat.pesan || '?'}`
-      : '';
-
-    if (kkUsul && noKKH === kkUsul)
+    nEdit = jumlahDari(
+      await jalankanDiTab('hitung', {
+        css: CONFIG.EDIT_CSS,
+        ms: 10000,
+      }),
+    );
+    if (nEdit !== 1)
       return {
-        status: 'VALIDASI OK: no_kk sudah benar (tanpa tombol Edit)',
-        detail: `no_kk halaman="${noKKH}" vs Excel="${kkUsul}"${catatTxt} | ${detailValidasi}`,
+        status: 'PERLU CEK MANUAL: tombol Edit belum muncul setelah Revoke',
+        detail: `Revoke diklik, tetapi tombol Edit ditemukan ${nEdit} | ${detailValidasi}`,
         konfirmasiAwal: konfAwal,
-        konfirmasiAkhir: '2. Sudah diperbaiki',
+        konfirmasiAkhir: konfAwal,
         identitas: teksIdn,
-        catatan: catat && catat.teks ? String(catat.teks) : '',
       };
-    return {
-      status: 'VALIDASI: no_kk halaman ≠ KK usul (tanpa tombol Edit)',
-      detail: `no_kk halaman="${noKKH || '-'}" vs Excel="${kkUsul || '-'}"${catatTxt} | ${detailValidasi}`,
-      konfirmasiAwal: konfAwal,
-      konfirmasiAkhir: '3. Tidak diperbaiki',
-      identitas: teksIdn,
-      catatan: catat && catat.teks ? String(catat.teks) : '',
-    };
   }
 
-  // 10) Klik Edit
+  // 11) Klik Edit (semua pencatatan dilakukan di halaman /edit)
   await limiter.tunggu('filter');
   await jalankanDiTab('klikEdit', { css: CONFIG.EDIT_CSS, ms: 10000 });
   if (!(await tungguUrl((p) => /\/edit\/?$/.test(p), 10000)))
@@ -400,34 +424,27 @@ async function alurKK(baris, link, petaKK, limiter) {
   const rNoKK2 = (await jalankanDiTab('bacaIdentitas', { varId: ['no_kk'] })).find((x) => x.utama);
   const noKKH2 = String((rNoKK2 && rNoKK2.nilai && rNoKK2.nilai.no_kk) || '').trim();
 
-  // Helper: jalankan catatan + kirim pembaruan sesuai config.
+  // [UBAH] Helper: jalankan catatan + kirim pembaruan sesuai config.
   const jalankanCatatKirim = async (kodeCatatan) => {
     const cfg = blokP.catatanKK;
-    if (!cfg || !cfg.aktif) return { catatTxt: '', kirimTxt: '', catatan: '' };
+    if (!cfg || !cfg.aktif) return { catatTxt: '', kirimTxt: '', catatan: '', dilewati: false, gagalKirim: false };
 
-    let catat = null;
-    let kirim = null;
-    if (kodeCatatan) {
-      try {
-        catat = (await jalankanDiTab('catatanField', {
-          varId: 'no_kk',
-          teks: kodeCatatan,
-          simpan: !!cfg.kirimCatatan,
-        })).find((x) => x && x.ok !== undefined);
-      } catch (e) {
-        catat = { ok: false, pesan: 'error: ' + (e && e.message) };
-      }
+    const catat = await catatKK(kodeCatatan, cfg);
+    const catatTxt = teksCatatan(catat);
+    const catatan = catat && catat.teks ? String(catat.teks) : '';
+
+    // [BARU] Catatan sudah ada di riwayat → jangan kirim ulang assignment yang sama.
+    if (catat && catat.dilewati) {
+      return { catatTxt, kirimTxt: '; Kirim dilewati (assignment sudah dicatat sebelumnya)', catatan, dilewati: true, gagalKirim: false };
     }
 
+    let kirim = null;
     try {
       const langkahAkhir = CONFIG.LANGKAH_AKHIR || {};
       kirim = (
         await jalankanDiTab('akhirCatatan', {
           ...langkahAkhir,
-          // KK memakai alur akhir yang sama dengan mode usaha:
-          // buka CATATAN → aktifkan anomali → buka dialog Kirim.
           klikKirim: true,
-          // false berarti inspeksi dry-run: dialog final dibiarkan terbuka.
           tahanDialog: !cfg.kirimPembaruan,
           konfirmasiKirim: !!cfg.kirimPembaruan,
         })
@@ -436,31 +453,36 @@ async function alurKK(baris, link, petaKK, limiter) {
       kirim = { ok: false, pesan: 'error: ' + (e && e.message) };
     }
 
-    const catatTxt = catat
-      ? catat.ok
-        ? `; catatan "${catat.teks}"${catat.dikirim ? ' DIKIRIM' : ' terisi (tidak dikirim)'}`
-        : `; catatan GAGAL: ${catat.pesan}`
-      : '';
+    // [UBAH] Baca status dari properti yang benar (sebelumnya kirim.dikonfirmasi → selalu undefined).
+    const terkirim = !!(kirim && kirim.ok && (kirim.dikirim || (kirim.dialog && kirim.dialog.dikonfirmasi)));
     let kirimTxt = '';
-    if (kirim) {
-      if (!kirim.ok) kirimTxt = `; kirim GAGAL: ${kirim.pesan}`;
-      else if (kirim.dikonfirmasi) kirimTxt = '; pembaruan DIKIRIM';
-      else if (kirim.dialog && kirim.dialog.ditahan) kirimTxt = '; dialog Kirim dibuka (belum dikirim)';
-      else kirimTxt = '; pembaruan dibatalkan (dry-run)';
-    }
-    return { catatTxt, kirimTxt, catatan: catat && catat.teks ? String(catat.teks) : '' };
+    if (!kirim) kirimTxt = '; kirim GAGAL: tidak ada hasil dari halaman';
+    else if (!kirim.ok) kirimTxt = `; kirim GAGAL: ${kirim.pesan}`;
+    else if (terkirim) kirimTxt = '; pembaruan DIKIRIM';
+    else if (kirim.dialog && kirim.dialog.ditahan) kirimTxt = '; dialog Kirim dibuka (belum dikirim)';
+    else if (kirim.dialog && kirim.dialog.dibatalkan) kirimTxt = '; pembaruan dibatalkan (dry-run)';
+    else kirimTxt = '; status kirim tidak jelas';
+
+    // Pembaruan diminta dikirim (kirimPembaruan: true) tetapi tidak terkirim → harus ditandai.
+    const gagalKirim = !!cfg.kirimPembaruan && !terkirim;
+    return { catatTxt, kirimTxt, catatan, dilewati: false, gagalKirim };
   };
 
-  // 12a) Sudah sesuai sejak awal → catatan #DC_00 + kirim sesuai config
-  if (noKKH2 === kkUsul) {
-    const cfg = blokP.catatanKK;
-    const kode = cfg && cfg.aktif ? cfg.kodeTetap || '#DC_00' : '';
-    const { catatTxt, kirimTxt, catatan } = await jalankanCatatKirim(kode);
+  // 12a) [UBAH] Tidak perlu mengisi no_kk: data Excel tidak lengkap (→ #DC_00) ATAU no_kk sudah sama (→ #DC_03).
+  if (!dataKKLengkap || noKKH2 === kkUsul) {
+    const { catatTxt, kirimTxt, catatan, dilewati, gagalKirim } = await jalankanCatatKirim(kodeCatatan);
+    const sesuai = !!kkUsul && noKKH2 === kkUsul;
     return {
-      status: 'VALIDASI OK: no_kk di /edit sudah sesuai',
-      detail: `no_kk="${noKKH2}"${catatTxt}${kirimTxt} | ${detailValidasi}`,
+      status: gagalKirim
+        ? 'PERLU CEK MANUAL: pembaruan tidak terkirim'
+        : dilewati
+          ? 'SUDAH DICATAT: catatan sebelumnya masih berlaku'
+          : !dataKKLengkap
+            ? 'TIDAK DIUBAH: data Excel tidak lengkap, hanya catatan'
+            : 'VALIDASI OK: no_kk di /edit sudah sesuai',
+      detail: `no_kk="${noKKH2}"${!dataKKLengkap ? ' (data Excel tidak lengkap, no_kk tidak diubah)' : ''}${catatTxt}${kirimTxt} | ${detailValidasi}`,
       konfirmasiAwal: konfAwal,
-      konfirmasiAkhir: '2. Sudah diperbaiki',
+      konfirmasiAkhir: gagalKirim ? konfAwal : sesuai ? '2. Sudah diperbaiki' : '3. Tidak diperbaiki',
       identitas: teksIdn,
       catatan,
     };
@@ -488,16 +510,15 @@ async function alurKK(baris, link, petaKK, limiter) {
     };
   }
 
-  // 13) Catatan #DC_03 (karena berubah) + kirim pembaruan
-  const cfgKK = blokP.catatanKK;
-  const kodeCatatan = cfgKK && cfgKK.aktif ? cfgKK.kodeBerubah || '#DC_03' : '';
-  const { catatTxt, kirimTxt, catatan } = await jalankanCatatKirim(kodeCatatan);
+  // 13) Catatan #DC_03 (data lengkap dan no_kk berhasil diisi) + kirim pembaruan
+  // [UBAH] kodeCatatan sudah ada dari 7.2 = '#DC_03' karena data lengkap
+  const { catatTxt, kirimTxt, catatan, gagalKirim } = await jalankanCatatKirim(kodeCatatan);
 
   return {
-    status: 'DIISI: no_kk diperbarui',
+    status: gagalKirim ? 'PERLU CEK MANUAL: no_kk sudah diisi tetapi pembaruan tidak terkirim' : 'DIISI: no_kk diperbarui',
     detail: `"${hasil.lama}" → "${kkUsul}"${catatTxt}${kirimTxt} | ${detailValidasi}`,
     konfirmasiAwal: konfAwal,
-    konfirmasiAkhir: '2. Sudah diperbaiki',
+    konfirmasiAkhir: gagalKirim ? konfAwal : '2. Sudah diperbaiki',
     identitas: teksIdn,
     catatan,
   };
@@ -547,6 +568,23 @@ async function mulai() {
   hasil = [];
   const limiter = buatLimiter(RATE_LIMIT_PROFILES[$('profil').value]);
   const target = rows.slice(0, Math.max(1, parseInt($('batas').value, 10) || rows.length));
+
+  // [BARU] Mode KK: satu link dengan kk_usul berbeda antar baris = kemungkinan salah data Excel.
+  const linkKonflik = new Set();
+  if (aksi === 'kk') {
+    const kkPerLink = new Map();
+    for (const b of rows) {
+      const l = String(b[kolomLink] || '').trim();
+      const kk = String(b[petaKK.kk_usul] ?? '').trim();
+      if (!l || !kk) continue;
+      if (!kkPerLink.has(l)) kkPerLink.set(l, new Set());
+      kkPerLink.get(l).add(kk);
+    }
+    for (const [l, s] of kkPerLink) if (s.size > 1) linkKonflik.add(l);
+    if (linkKonflik.size) log(`PERINGATAN: ${linkKonflik.size} link punya kk_usul berbeda antar baris Excel; baris itu akan ditandai PERLU CEK MANUAL.`);
+  }
+  const linkTerlihat = new Map(); // [BARU] link → nomor baris Excel terakhir yang memprosesnya
+
   setBusy(true);
   log(`Mulai: ${target.length} baris, mode ${modeId}, profil ${$('profil').value}.`);
   try {
@@ -566,6 +604,9 @@ async function mulai() {
       try {
         if (!/^https:\/\//.test(link) || new URL(link).host !== CONFIG.HOST) {
           r = { status: 'DILEWATI: link kosong atau host tidak cocok' };
+          // [BARU] cabang konflik
+        } else if (aksi === 'kk' && linkKonflik.has(link)) {
+          r = { status: 'PERLU CEK MANUAL: link yang sama punya kk_usul berbeda antar baris Excel' };
         } else if (aksi === 'kk') {
           r = await denganSesi(() => alurKK(baris, link, petaKK, limiter));
         } else {
@@ -586,6 +627,11 @@ async function mulai() {
         }
         r = { status: 'GAGAL: ' + String(e.message).split('\n')[0].slice(0, 200) };
       }
+
+      // [BARU] Info audit: assignment ini sudah pernah diproses baris lain di sesi ini.
+      const barisSebelumnya = linkTerlihat.get(link);
+      if (barisSebelumnya) r.detail = (r.detail ? r.detail + ' | ' : '') + `link sama dengan baris Excel ${barisSebelumnya}`;
+      if (link) linkTerlihat.set(link, i + 2);
 
       hasil.push({
         baris_excel: i + 2,

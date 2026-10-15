@@ -41,7 +41,7 @@ const CONFIG = {
   // sebelum baris berikutnya diproses. Berguna supaya SPA menutup dialog /
   // menyelesaikan animasi sebelum navigasi berikutnya.
   // Jitter hanya MENAMBAH (0–1× nilai) supaya tidak terlalu teratur.
-  JEDA_ANTAR_BARIS_S: 4,
+  JEDA_ANTAR_BARIS_S: 2,
 
   // Kalkulasi total & skip jika minus.
   //   pengeluaran = gaji + biaya_produksi + biaya_pembelian + operasional + non_operasional
@@ -68,6 +68,7 @@ const CONFIG = {
   TEKS_SSO: 'Lanjutkan dengan SSO', // teks tombol login SSO
   TEKS_REVIEW: 'Review', // teks tombol/link Review di halaman detail
   EDIT_CSS: 'button:has(svg.tabler-icon-edit)', // tombol Edit (ikon, tanpa teks)
+  REVOKE_CSS: 'button:has(svg.tabler-icon-rotate-clockwise)', // tombol Revoke assignment yang sudah approved
 
   // Field yang diubah. Kunci = nama tampilan di panel; kolom Excel dipilih lewat dropdown di panel.
   //   varId : awalan id kontainer pertanyaan di halaman (contoh id="biaya_produksi#1" -> "biaya_produksi")
@@ -180,8 +181,8 @@ const BLOKS = {
     },
     kalkulasiSkip: false,
     // Catatan kode + kirim pembaruan setelah no_kk diproses.
-    //   kodeBerubah : teks catatan kalau no_kk BERUBAH (baru saja diisi)
-    //   kodeTetap   : teks catatan kalau no_kk TIDAK berubah (sudah sesuai)
+    //   kodeLengkap      : [UBAH, dulu kodeBerubah] dipakai bila data Excel LENGKAP (no_kk/kk usul, NIK usul, nama NIK ada)
+    //   kodeTidakLengkap : [UBAH, dulu kodeTetap]   dipakai bila salah satu data itu kosong (tidak memenuhi syarat perubahan)
     //   kirimCatatan: true = klik tombol "Simpan" di dialog Catatan (kirim catatan)
     //                 false = isi textarea lalu tutup tanpa kirim (dry-run)
     //   kirimPembaruan: true = klik "Kirim", lalu "Konfirmasi" pada dialog kedua
@@ -189,10 +190,19 @@ const BLOKS = {
     //                   false = buka dialog Kirim lalu tahan tetap terbuka (dry-run)
     catatanKK: {
       aktif: true,
-      kodeBerubah: '#DC_03',
-      kodeTetap: '#DC_00',
+      kodeLengkap: '#DC_03', // [UBAH]
+      kodeTidakLengkap: '#DC_00', // [UBAH]
       kirimCatatan: true,
       kirimPembaruan: true,
+      // Kunci = kode yang AKAN ditulis. Nilai = daftar teks yang bila menjadi
+      // pesan TERAKHIR di riwayat Catatan (dari siapa pun — diri sendiri atau
+      // user lain) membuat penulisan dilewati. Cek hanya pada pesan terakhir,
+      // bukan seluruh riwayat, supaya tidak terjebak catatan lama yang sudah
+      // ditimpa statusnya.
+      lewatJika: {
+        '#DC_03': ['#DC_03'],
+        '#DC_00': ['#DC_00', '#DC_03'],
+      },
     },
   },
 };
