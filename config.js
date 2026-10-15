@@ -160,6 +160,13 @@ const BLOKS = {
         kolom: ['biaya_produksi'],
         flagKolom: ['biaya_produksi_flag'],
       },
+      'Biaya Operasional': {
+        varId: 'operasional',
+        label: 'Biaya operasional',
+        tipe: 'angka',
+        kolom: ['biaya_operasional', 'operasional', 'biaya operasional'],
+        flagKolom: ['biaya_operasional_flag', 'operasional_flag', 'biaya operasional flag'],
+      },
       'Biaya Non Operasional': {
         varId: 'non_operasional',
         tipe: 'angka',
@@ -185,7 +192,7 @@ const BLOKS = {
       nilaiAktif: ['1'], // nilai sel flag yang dianggap aktif (angka 1.0 juga dikenali)
       catatanKolom: ['catatan'], // tebakan awal dropdown "Kolom catatan"
       catatanWajib: true, // true = baris dilewati bila teks catatan kosong
-      catatanJikaSama: false, // true = tetap menulis catatan walau nilai halaman sudah sama
+      catatanJikaSama: true, // true = tetap memeriksa/menulis catatan walau nilai halaman sudah sama
       simpanCatatan: true, // true = klik "Simpan" di dialog Catatan (MENYIMPAN catatan)
       kirimPembaruan: true, // true = klik "Kirim" lalu "Konfirmasi" (MENYIMPAN perubahan)
       // [BARU] true = assignment_link langsung ke halaman detail (ada tombol Edit); lewati pencarian tombol Review.

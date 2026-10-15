@@ -104,9 +104,11 @@
   };
 
   // Normalkan nilai rupiah jadi string bilangan bulat; null kalau bukan angka bulat.
+  // Nilai berupa tanda strip ("-", "–", "—") dinormalkan menjadi "0".
   const angka = (v) => {
-    let t = String(v).replace(/rp/gi, '').replace(/\s/g, '');
+    let t = String(v == null ? '' : v).replace(/rp/gi, '').replace(/\s/g, '');
     if (t === '') return null;
+    if (/^[-–—]+$/.test(t)) return '0';
     if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(t)) t = t.replace(/\./g, '').replace(',', '.');
     else if (/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(t)) t = t.replace(/,/g, '');
     else t = t.replace(',', '.');
@@ -271,82 +273,159 @@
 
       const target = norm(a.nama);
       if (!target) return { ada: true, ok: false, total: daftar.length, pesan: 'nama usaha di Excel kosong' };
-      const tanpaKurung = (t) => norm(String(t).replace(/\s*\([^)]*\)\s*$/, ''));
-      let cocok = daftar.filter((h) => judul(h) === target);
-      if (!cocok.length) cocok = daftar.filter((h) => tanpaKurung(h.getAttribute('title')) === target);
-      if (!cocok.length && a.longgar) cocok = daftar.filter((h) => judul(h).includes(target));
-      if (cocok.length !== 1) {
+
+      // Helper pembersih kurung dan karakter ekstra
+      const bersihkan = (t) => norm(String(t || '').replace(/<[^>]*>/g, ' ').replace(/\([^)]*\)/g, ' ')).replace(/\s+/g, ' ').trim();
+      const targetBersih = bersihkan(target);
+
+      // Tahap 1: Kumpulkan kandidat dari sidebar
+      // 1. Judul item persis sama
+      let kandidat = daftar.filter((h) => judul(h) === target);
+      // 2. Judul item sama setelah kurung dibersihkan
+      if (!kandidat.length) {
+        kandidat = daftar.filter((h) => bersihkan(judul(h)) === targetBersih);
+      }
+      // 3. Loose match: salah satu memuat yang lain
+      if (!kandidat.length || a.longgar) {
+        const tambahan = daftar.filter((h) => {
+          const jB = bersihkan(judul(h));
+          return jB && targetBersih && (jB.includes(targetBersih) || targetBersih.includes(jB) || judul(h).includes(target) || target.includes(judul(h)));
+        });
+        kandidat = [...new Set([...kandidat, ...tambahan])];
+      }
+      // 4. Fallback: jika hanya ada 1 item di sidebar seluruhnya, masukkan untuk diverifikasi di form
+      if (!kandidat.length && daftar.length === 1) {
+        kandidat = [daftar[0]];
+      }
+
+      if (!kandidat.length) {
         return {
           ada: true,
           ok: false,
           total: daftar.length,
-          cocok: cocok.length,
+          cocok: 0,
           pesan:
-            `usaha yang cocok: ${cocok.length} dari ${daftar.length} (harus tepat 1)` +
-            (a.debug
-              ? ` | Excel: "${target}" | sidebar: ${daftar
-                  .slice(0, 8)
-                  .map((h) => '"' + h.getAttribute('title') + '"')
-                  .join(', ')}`
-              : ''),
+            `usaha di sidebar tidak ditemukan untuk "${a.nama}" (ada ${daftar.length}: ${daftar
+              .slice(0, 8)
+              .map((h) => '"' + h.getAttribute('title') + '"')
+              .join(', ')})`,
         };
       }
 
-      const h = cocok[0];
-      const terbukaAwal = terbuka(h);
-      let diklikBuka = false;
-      let diklikPilih = false;
-
-      if (h.scrollIntoView) h.scrollIntoView({ block: 'center' });
-
-      // --- 1) Buka collapsible kalau belum terbuka (perilaku lama).
-      if (!terbukaAwal) diklikBuka = await bukaHeader(h);
-
-      // --- 2) Pilih usaha → memicu SPA memuat form usaha di area utama.
-      //     Deteksi pakai id field yang stabil: <varId>#<N>. Kita pakai daftar
-      //     id dari CONFIG kalau tersedia; fallback ke awalan generik.
+      // Deteksi form ter-render
       const prefiks = Array.isArray(a.fieldVarIds) && a.fieldVarIds.length ? a.fieldVarIds : ['biaya_produksi', 'operasional'];
       const adaForm = () => prefiks.some((p) => document.querySelector(`[id^="${p}#"]`));
 
-      if (!adaForm()) {
-        // Kandidat klik untuk memilih: <a href> di header, <a href> di konten
-        // collapsible, lalu header itu sendiri (fallback).
-        const kandidat = [];
+      const pilihHeader = async (h) => {
+        if (h.scrollIntoView) h.scrollIntoView({ block: 'center' });
+        const terbukaAwal = terbuka(h);
+        let diklikBuka = false;
+        let diklikPilih = false;
+        if (!terbukaAwal) diklikBuka = await bukaHeader(h);
+
+        const kandidatKlik = [];
         const aHeader = h.querySelector('a[href]');
-        if (aHeader) kandidat.push(aHeader);
+        if (aHeader) kandidatKlik.push(aHeader);
         const konten = h.nextElementSibling;
         const aKonten = konten && konten.querySelector('a[href]');
-        if (aKonten) kandidat.push(aKonten);
-        // Fallback: klik header persis seperti bukaHeader.
+        if (aKonten) kandidatKlik.push(aKonten);
         for (const el of [h, h.querySelector('[title]'), h.lastElementChild]) {
-          if (el) kandidat.push(el);
+          if (el) kandidatKlik.push(el);
         }
 
-        for (const el of kandidat) {
+        for (const el of kandidatKlik) {
           el.click();
-          if (await tunggu(adaForm, 2500)) {
+          await new Promise((r) => setTimeout(r, 300));
+          if (adaForm()) {
             diklikPilih = true;
             break;
           }
         }
+        await tunggu(adaForm, 8000);
+        await new Promise((r) => setTimeout(r, 400));
+        return { diklikBuka, diklikPilih, terbukaAwal };
+      };
+
+      const bacaNamaForm = () => {
+        const idList = [a.varIdIdentitas, 'nama_komersial', 'nama_usaha'].filter(Boolean);
+        for (const v of idList) {
+          const wadah = [...document.querySelectorAll('[id^="' + v + '#"]')].filter(terlihat);
+          const langsung = document.getElementById(v);
+          if (langsung && terlihat(langsung)) wadah.push(langsung);
+          for (const w of wadah) {
+            const inp = w.querySelector(kontrol);
+            const val = inp ? String(inp.value || '') : String(w.textContent || '');
+            if (val.trim()) return val.trim();
+          }
+        }
+        return '';
+      };
+
+      const cekNamaCocok = (namaForm, namaExcel) => {
+        const f = norm(namaForm);
+        const e = norm(namaExcel);
+        if (!f || !e) return false;
+        if (f === e) return true;
+
+        const fPolos = f.replace(/[<>()\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+        const ePolos = e.replace(/[<>()\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+        if (fPolos === ePolos) return true;
+        if (fPolos.includes(ePolos) || ePolos.includes(fPolos)) return true;
+
+        const matchOwner = String(namaExcel).match(/[<(]([^>)]+)[>)]/);
+        const baseExcel = bersihkan(namaExcel);
+        if (matchOwner) {
+          const owner = norm(matchOwner[1]);
+          if (fPolos.includes(baseExcel) && fPolos.includes(owner)) return true;
+        }
+        return false;
+      };
+
+      // Tahap 2: Verifikasi form identitas untuk setiap kandidat sidebar
+      let terpilih = null;
+      let infoTerpilih = null;
+      let namaFormTerverifikasi = '';
+      const riwayatCek = [];
+
+      for (let i = 0; i < kandidat.length; i++) {
+        const h = kandidat[i];
+        const info = await pilihHeader(h);
+        const namaForm = bacaNamaForm();
+        const judulSidebar = h.getAttribute('title') || '';
+        riwayatCek.push(`sidebar "${judulSidebar}" → form "${namaForm || '(kosong)'}"`);
+
+        // Cocok jika nama komersial di form sesuai,
+        // atau jika kandidat hanya 1 dan judul sidebar sudah persis sama / form tidak memuat field nama
+        if (cekNamaCocok(namaForm, a.nama) || (kandidat.length === 1 && (!namaForm || judul(h) === target))) {
+          terpilih = h;
+          infoTerpilih = info;
+          namaFormTerverifikasi = namaForm || judulSidebar;
+          break;
+        }
       }
 
-      // --- 3) Tunggu form benar-benar ter-render.
-      const formMuncul = await tunggu(adaForm, 8000);
-      await new Promise((r) => setTimeout(r, 400));
+      if (!terpilih) {
+        return {
+          ada: true,
+          ok: false,
+          total: daftar.length,
+          cocok: 0,
+          pesan: `nama usaha di form tidak cocok dengan Excel "${a.nama}" (diperiksa: ${riwayatCek.join('; ')})`,
+        };
+      }
 
-      h.style.outline = '3px solid #16a34a';
-
+      terpilih.style.outline = '3px solid #16a34a';
       const ctr = [...document.querySelectorAll(kontrol)];
       return {
         ada: true,
         ok: true,
         total: daftar.length,
         cocok: 1,
-        terbukaAwal,
-        diklik: diklikBuka,
-        dipilih: diklikPilih,
-        formMuncul: !!formMuncul,
+        terbukaAwal: infoTerpilih ? infoTerpilih.terbukaAwal : false,
+        diklik: infoTerpilih ? infoTerpilih.diklikBuka : false,
+        dipilih: infoTerpilih ? infoTerpilih.diklikPilih : false,
+        formMuncul: true,
+        namaForm: namaFormTerverifikasi,
         kontrol: ctr.length,
         terlihat: ctr.filter(terlihat).length,
       };
@@ -425,6 +504,7 @@
           .replace(/rp/gi, '')
           .replace(/\s/g, '');
         if (t === '') return null;
+        if (/^[-–—]+$/.test(t)) return 0;
         if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(t)) t = t.replace(/\./g, '').replace(',', '.');
         else if (/^\d{1,3}(,\d{3})+(\.\d+)?$/.test(t)) t = t.replace(/,/g, '');
         else t = t.replace(',', '.');
@@ -837,6 +917,21 @@
       };
     }
 
+    // [BARU] Cek apakah teks catatan yang sama sudah ada di riwayat dialog
+    const teksNorm = norm(teks);
+    const adaDiRiwayat = riwayat.some((r) => norm(r.teks) === teksNorm);
+    if (adaDiRiwayat) {
+      await tutupDialog(dialog);
+      return {
+        ok: true,
+        dilewati: true,
+        sudahAda: true,
+        teks,
+        terakhir,
+        jumlahRiwayat: riwayat.length,
+      };
+    }
+
     ta.style.outline = '3px solid #2563eb';
     if (ta.scrollIntoView) ta.scrollIntoView({ block: 'center' });
     if (ta.focus) ta.focus();
@@ -855,13 +950,17 @@
       if (btnSimpan) {
         btnSimpan.click();
         await tunggu(() => !dialog.hasAttribute('data-expanded'), 3000);
-        return { ok: tertahan, tertahan, teks, dikirim: true, terakhir }; // [UBAH]
+        // Pada sebagian halaman, tombol Simpan hanya menyimpan catatan
+        // tetapi dialog tetap terbuka. Tutup secara eksplisit agar alur
+        // berikutnya (termasuk tombol Kirim utama) tidak tertahan oleh dialog.
+        if (dialog.hasAttribute('data-expanded')) await tutupDialog(dialog);
+        return { ok: tertahan, tertahan, teks, dikirim: true, baru: true, terakhir };
       }
     }
 
     await tutupDialog(dialog);
 
-    return { ok: tertahan, tertahan, teks, dikirim: false, terakhir }; // [UBAH]
+    return { ok: tertahan, tertahan, teks, dikirim: false, baru: true, terakhir };
   }
 
   async function tutupDialog(dialog) {

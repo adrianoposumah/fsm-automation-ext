@@ -253,6 +253,17 @@
         text-overflow: ellipsis;
       }
 
+      #previewMulai {
+        margin-top: var(--sp-3);
+        padding: var(--sp-3);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        background: var(--bg-elev);
+        color: var(--fg-muted);
+        font-size: 12px;
+        white-space: pre-wrap;
+      }
+
       #log {
         background: #0f172a;
         color: #e2e8f0;
@@ -352,6 +363,12 @@
           <button id="btnStop" class="danger" disabled>Stop</button>
           <button id="btnLog">Unduh log (.xlsx)</button>
         </div>
+        <div class="row">
+          <label for="mulaiBaris" class="label">Mulai dari baris Excel</label>
+          <input type="number" id="mulaiBaris" value="2" min="2" step="1" style="width: 90px" />
+          <span class="hint" style="margin-top: 0">Baris 1 dianggap sebagai header.</span>
+        </div>
+        <div id="previewMulai" aria-live="polite">Muat file Excel untuk melihat preview baris.</div>
         <small class="hint"> Mode simulasi — tidak menyimpan. Pintasan: <kbd>Ctrl</kbd>+<kbd>Enter</kbd> Mulai, <kbd>Esc</kbd> Stop. </small>
       </div>
     </section>

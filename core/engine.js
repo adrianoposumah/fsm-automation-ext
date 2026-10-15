@@ -137,6 +137,7 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
         longgar: opsi.longgar,
         debug: opsi.debug,
         fieldVarIds,
+        varIdIdentitas: blok.identitas && blok.identitas.varId,
       })
     ).find((r) => r.ada);
   } else {
@@ -157,7 +158,9 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
 
   // --- Identitas record ---
   let teksIdn = '';
-  if (blok.identitas && blok.identitas.varId) {
+  if (ru && ru.namaForm) {
+    teksIdn = `${(blok.identitas && blok.identitas.label) || 'Nama komersial'} di halaman: "${ru.namaForm}"`;
+  } else if (blok.identitas && blok.identitas.varId) {
     const rIdn = (await jalankanDiTab('bacaIdentitas', { varId: [blok.identitas.varId] })).find((x) => x.nilai && x.nilai[blok.identitas.varId] !== undefined && x.nilai[blok.identitas.varId] !== null);
     const nilaiIdn = rIdn ? rIdn.nilai[blok.identitas.varId] : null;
     teksIdn = nilaiIdn ? `${blok.identitas.label} di halaman: "${nilaiIdn}"` : `${blok.identitas.label} di halaman: (tidak ditemukan)`;
@@ -225,8 +228,37 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
     }
   }
 
-  // --- Cek & isi field (tetap seperti sebelumnya) ---
-  let g = gabung(await jalankanDiTab('cek', { fields }));
+  // --- Cek & isi field ---
+  // Satu field per panggilan supaya hasilnya dapat ditampilkan ke log
+  // segera setelah field selesai, bukan menunggu seluruh baris selesai.
+  const logField = (fase, k, v) => {
+    const awalan = opsi.barisExcel ? `[baris ${opsi.barisExcel}] ` : '';
+    if (!v || !v.ketemu) return log(`${awalan}${fase} ${k}: TIDAK DITEMUKAN`);
+    if (v.tersembunyi) return log(`${awalan}${fase} ${k}: ADA TAPI TIDAK TAMPIL`);
+    if (v.ambigu) return log(`${awalan}${fase} ${k}: AMBIGU (${v.ambigu} kandidat)`);
+    if (fase === 'cek') return log(`${awalan}cek ${k}: ditemukan${v.terkunci ? ' [terkunci]' : ''}`);
+    if (v.diisi) return log(`${awalan}isi ${k}: "${v.lama ?? ''}" → "${v.baruAngka ?? nilai[k] ?? ''}"`);
+    if (v.sama) return log(`${awalan}isi ${k}: sudah sama ("${v.lama ?? ''}")`);
+    return log(`${awalan}isi ${k}: GAGAL${v.alasan ? ` — ${v.alasan}` : ''}`);
+  };
+
+  const jalankanPerField = async (op, argTambahan) => {
+    const out = {};
+    for (const k of pilih) {
+      const hasilField = gabung(
+        await jalankanDiTab(op, {
+          ...argTambahan,
+          fields: { [k]: fields[k] },
+          ...(argTambahan.nilai ? { nilai: { [k]: nilai[k] } } : {}),
+        }),
+      );
+      out[k] = hasilField[k];
+      logField(op === 'cek' ? 'cek' : 'isi', k, out[k]);
+    }
+    return out;
+  };
+
+  let g = await jalankanPerField('cek', {});
   const bermasalah = pilih.filter((k) => !g[k] || !g[k].ketemu || g[k].ambigu || g[k].tersembunyi || (blok.flag && g[k].terkunci));
   if (mode === 'isi' && !bermasalah.length) {
     // [BARU] Mode flag: teks catatan dari kolom Excel terpilih; hanya untuk field yang benar-benar terisi.
@@ -235,26 +267,25 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
         ? { aktif: true, teks: opsi.teksCatatan, simpan: !!blok.flag.simpanCatatan, hanyaJikaBerhasil: true, jikaSama: !!blok.flag.catatanJikaSama }
         : { aktif: false }
       : CONFIG.CATATAN || { aktif: false };
-    g = gabung(
-      await jalankanDiTab('isi', {
-        fields,
-        nilai,
-        catatan: catatanIsi,
-      }),
-    );
+    g = await jalankanPerField('isi', { nilai, catatan: catatanIsi });
   }
 
   // [BARU] Mode flag: cek hasil pengisian sebelum langkah akhir.
   let gagalIsi = [];
   let adaPerubahan = true;
+  let adaCatatanBaru = false;
   if (mode === 'isi' && blok.flag && !bermasalah.length) {
     gagalIsi = pilih.filter((k) => !(g[k] && (g[k].diisi || g[k].sama)));
     adaPerubahan = pilih.some((k) => g[k] && g[k].diisi);
+    adaCatatanBaru = pilih.some((k) => g[k] && g[k].catatan && g[k].catatan.ok && !g[k].catatan.dilewati && !g[k].catatan.sudahAda);
   }
+
+  // Perlu kirim jika ada nilai field yang berubah ATAU ada catatan baru yang ditinggalkan pada mode flag
+  const perluKirim = adaPerubahan || (blok.flag && adaCatatanBaru);
 
   // --- Langkah akhir ---
   let akhir = null;
-  if (mode === 'isi' && !bermasalah.length && !gagalIsi.length && adaPerubahan && CONFIG.LANGKAH_AKHIR && CONFIG.LANGKAH_AKHIR.aktif) {
+  if (mode === 'isi' && !bermasalah.length && !gagalIsi.length && perluKirim && CONFIG.LANGKAH_AKHIR && CONFIG.LANGKAH_AKHIR.aktif) {
     // [BARU] kirimPembaruan: klik Kirim lalu Konfirmasi (menyimpan). Selain itu perilaku lama (dry-run).
     const langkah = blok.flag && blok.flag.kirimPembaruan ? { ...CONFIG.LANGKAH_AKHIR, tahanDialog: false, konfirmasiKirim: true } : CONFIG.LANGKAH_AKHIR;
     try {
@@ -273,7 +304,7 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
       if (v.ambigu) return `${k}: AMBIGU (${v.ambigu} kandidat)${ids(v)}`;
       if (mode === 'isi' && !bermasalah.length) {
         const cat = v.catatan;
-        const catTxt = cat ? (cat.ok ? `; catatan "${cat.teks}" ${cat.dikirim ? 'DISIMPAN' : 'terisi (tidak disimpan)'}` : `; catatan GAGAL: ${cat.pesan || '?'}`) : '';
+        const catTxt = cat ? (cat.ok ? (cat.sudahAda || cat.dilewati ? `; catatan "${cat.teks}" SUDAH ADA` : `; catatan "${cat.teks}" ${cat.dikirim ? 'DISIMPAN' : 'terisi (tidak disimpan)'}`) : `; catatan GAGAL: ${cat.pesan || '?'}`) : '';
         if (v.sama) return `${k}: sudah sama ("${v.lama}")${catTxt}`;
         return v.diisi ? `${k}: "${v.lama}" → "${String(nilai[k]).trim().slice(0, 60)}"${catTxt}` : `${k}: tidak terisi (${v.alasan || '?'}${v.lama !== undefined ? '; lama "' + v.lama + '"' : ''})${catTxt}`;
       }
@@ -286,9 +317,9 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
   if (bermasalah.length) status = `${mode === 'isi' ? 'PERLU CEK MANUAL' : 'CEK GAGAL'}: ada field tidak ketemu/tidak tampil/ambigu${blok && blok.flag ? '/terkunci' : ''}${mode === 'isi' ? ', tidak ada yang diisi' : ''}`;
   else if (mode === 'isi' && blok && blok.flag) {
     if (gagalIsi.length) status = `PERLU CEK MANUAL: field gagal diisi (${gagalIsi.join(', ')}); tidak dikirim`;
-    else if (!adaPerubahan) status = 'SUDAH SESUAI: semua field target sudah bernilai sama; tidak dikirim';
-    else if (blok.flag.kirimPembaruan) status = terkirim ? 'DIISI & DIKIRIM' : 'PERLU CEK MANUAL: field terisi tetapi pembaruan tidak terkirim';
-    else status = 'DRY-RUN: diisi, tidak disimpan';
+    else if (!adaPerubahan && !adaCatatanBaru) status = 'SUDAH SESUAI: semua field target sudah bernilai sama & catatan sudah ada; tidak dikirim';
+    else if (blok.flag.kirimPembaruan) status = terkirim ? (adaPerubahan ? 'DIISI & DIKIRIM' : 'CATATAN DIISI & DIKIRIM') : `PERLU CEK MANUAL: ${adaPerubahan ? 'field terisi' : 'catatan terisi'} tetapi pembaruan tidak terkirim`;
+    else status = adaPerubahan ? 'DRY-RUN: diisi, tidak disimpan' : 'DRY-RUN: nilai sudah sama, catatan terisi (tidak disimpan)';
   } else status = mode === 'isi' ? 'DRY-RUN: diisi, tidak disimpan' : 'CEK OK: semua field ketemu dan tampil';
   const catatan = pilih
     .map((k) => (g[k] && g[k].catatan && g[k].catatan.teks ? String(g[k].catatan.teks) : ''))
@@ -661,7 +692,11 @@ async function mulai() {
   stopFlag = false;
   hasil = [];
   const limiter = buatLimiter(RATE_LIMIT_PROFILES[$('profil').value]);
-  const target = rows.slice(0, Math.max(1, parseInt($('batas').value, 10) || rows.length));
+  const mulaiBaris = Math.max(2, parseInt($('mulaiBaris').value, 10) || 2);
+  const mulaiIndex = mulaiBaris - 2;
+  const batas = Math.max(1, parseInt($('batas').value, 10) || rows.length);
+  if (mulaiIndex >= rows.length) return log(`Baris mulai ${mulaiBaris} berada di luar data.`);
+  const target = rows.slice(mulaiIndex, mulaiIndex + batas);
 
   // [BARU] Mode KK: satu link dengan kk_usul berbeda antar baris = kemungkinan salah data Excel.
   const linkKonflik = new Set();
@@ -680,7 +715,7 @@ async function mulai() {
   const linkTerlihat = new Map(); // [BARU] link → nomor baris Excel terakhir yang memprosesnya
 
   setBusy(true);
-  log(`Mulai: ${target.length} baris, mode ${modeId}, profil ${$('profil').value}.`);
+  log(`Mulai: ${target.length} baris dari Excel baris ${mulaiBaris}, mode ${modeId}, profil ${$('profil').value}.`);
   try {
     await buka(`https://${CONFIG.HOST}${CONFIG.START_PATH}`, limiter).catch((e) => {
       if (!(e instanceof SesiHabis)) throw e;
@@ -693,6 +728,7 @@ async function mulai() {
         break;
       }
       const baris = target[i];
+      const barisExcel = mulaiIndex + i + 2;
       const link = String(baris[kolomLink] || '').trim();
       let r;
       try {
@@ -721,6 +757,7 @@ async function mulai() {
               blok,
               masalahFlag,
               teksCatatan: flagCfg ? String(baris[kolomCatatan] == null ? '' : baris[kolomCatatan]).trim() : '',
+              barisExcel,
             }),
           );
         }
@@ -735,12 +772,12 @@ async function mulai() {
       // [BARU] Info audit: assignment ini sudah pernah diproses baris lain di sesi ini.
       const barisSebelumnya = linkTerlihat.get(link);
       if (barisSebelumnya) r.detail = (r.detail ? r.detail + ' | ' : '') + `link sama dengan baris Excel ${barisSebelumnya}`;
-      if (link) linkTerlihat.set(link, i + 2);
+      if (link) linkTerlihat.set(link, barisExcel);
 
       const namaUsaha = (r && r.namaUsaha) || (kolomUsaha ? String(baris[kolomUsaha] || '').trim() : (aksi === 'kk' && petaKK && petaKK.nama_nik ? String(baris[petaKK.nama_nik] || '').trim() : ''));
 
       hasil.push({
-        baris_excel: i + 2,
+        baris_excel: barisExcel,
         link,
         nama_usaha: namaUsaha,
         mode: modeId,

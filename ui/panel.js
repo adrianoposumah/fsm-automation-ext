@@ -23,6 +23,49 @@ function setChipSesi(status) {
   }
 }
 
+function renderPreviewMulai() {
+  const el = $('previewMulai');
+  if (!el) return;
+  el.textContent = '';
+
+  if (!rows.length) {
+    el.textContent = 'Muat file Excel untuk melihat preview baris.';
+    return;
+  }
+
+  const mulai = Math.max(2, parseInt($('mulaiBaris').value, 10) || 2);
+  const batas = Math.max(1, parseInt($('batas').value, 10) || rows.length);
+  const awal = mulai - 2;
+  if (awal >= rows.length) {
+    el.textContent = `Baris mulai ${mulai} berada di luar data (total baris data: ${rows.length}).`;
+    return;
+  }
+
+  const jumlah = Math.min(batas, rows.length - awal);
+  const akhir = mulai + jumlah - 1;
+  const ringkasan = document.createElement('div');
+  ringkasan.textContent = `Preview: ${jumlah} baris, Excel ${mulai}–${akhir} dari ${rows.length + 1} baris termasuk header.`;
+  el.appendChild(ringkasan);
+
+  const daftar = document.createElement('div');
+  const kolomLinkDipilih = $('kolomLink').value;
+  const kolomNama = $('kolomUsaha').value;
+  for (let i = 0; i < Math.min(jumlah, 5); i++) {
+    const baris = rows[awal + i];
+    const link = kolomLinkDipilih && baris[kolomLinkDipilih] ? maskPath(String(baris[kolomLinkDipilih]).trim()) : '(link kosong)';
+    const nama = kolomNama && baris[kolomNama] ? String(baris[kolomNama]).trim() : '';
+    const item = document.createElement('div');
+    item.textContent = `Baris ${mulai + i}: ${nama ? nama + ' — ' : ''}${link}`;
+    daftar.appendChild(item);
+  }
+  if (jumlah > 5) {
+    const sisa = document.createElement('div');
+    sisa.textContent = `… dan ${jumlah - 5} baris lainnya.`;
+    daftar.appendChild(sisa);
+  }
+  el.appendChild(daftar);
+}
+
 async function pilihTabKerja() {
   // Cari tab yang sudah terbuka di host target.
   const tabs = await chrome.tabs.query({ url: `https://${CONFIG.HOST}/*` });
@@ -134,6 +177,7 @@ function pasangPanel() {
       }
 
       renderKolomUpdate();
+      renderPreviewMulai();
     } catch (err) {
       log('ERROR membaca Excel: ' + err.message);
     }
@@ -149,7 +193,12 @@ function pasangPanel() {
     .join('');
   $('mode').value = 'review';
   $('mode').onchange = renderKolomUpdate;
+  $('mulaiBaris').addEventListener('input', renderPreviewMulai);
+  $('batas').addEventListener('input', renderPreviewMulai);
+  $('kolomLink').addEventListener('change', renderPreviewMulai);
+  $('kolomUsaha').addEventListener('change', renderPreviewMulai);
   renderKolomUpdate();
+  renderPreviewMulai();
 
   setChipSesi('belum-dibuka');
 
