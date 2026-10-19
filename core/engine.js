@@ -21,16 +21,26 @@ function flagAktif(v, cfgFlag) {
 
 // [BARU] Tentukan field target satu baris: flag aktif. Field dengan flag aktif tetapi nilai kosong
 // dicatat sebagai masalah (seluruh baris akan dilewati, tidak ada pembaruan sebagian).
-function pilihDariFlag(baris, blok, petaKolom, petaFlag) {
+function pilihDariFlag(baris, blok, petaKolom, petaFlag, petaCatatan) {
   const pilih = [];
   const masalah = [];
   for (const k of Object.keys(blok.fields)) {
-    if (!petaFlag[k]) continue; // kolom flag tidak dipilih → field tidak dikelola
-    if (!flagAktif(baris[petaFlag[k]], blok.flag)) continue;
+    if (!blok.flag.tanpaFlag) {
+      if (!petaFlag[k]) continue; // kolom flag tidak dipilih → field tidak dikelola
+      if (!flagAktif(baris[petaFlag[k]], blok.flag)) continue;
+    }
     const mentah = petaKolom[k] ? baris[petaKolom[k]] : '';
     if (String(mentah == null ? '' : mentah).trim() === '') {
-      masalah.push(`${k}: flag aktif tetapi nilai kosong`);
+      if (blok.fields[k].opsional) continue;
+      masalah.push(`${k}: nilai kosong`);
       continue;
+    }
+    if (blok.flag && blok.flag.catatanPerField && blok.flag.catatanWajib !== false && !blok.fields[k].opsional) {
+      const catatan = petaCatatan && petaCatatan[k] ? baris[petaCatatan[k]] : '';
+      if (String(catatan == null ? '' : catatan).trim() === '') {
+        masalah.push(`${k}: catatan kosong`);
+        continue;
+      }
     }
     pilih.push(k);
   }
@@ -183,8 +193,8 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
   if (mode === 'isi' && blok && blok.flag) {
     const masalah = opsi.masalahFlag || [];
     if (masalah.length) return { status: 'DILEWATI: ' + masalah.join('; ') };
-    if (!pilih.length) return { status: 'DILEWATI: tidak ada flag bernilai 1' };
-    if (blok.flag.catatanWajib !== false && !opsi.teksCatatan) return { status: 'DILEWATI: kolom catatan kosong untuk baris ini' };
+    if (!pilih.length) return { status: blok.flag.tanpaFlag ? 'DILEWATI: tidak ada field yang dapat diproses' : 'DILEWATI: tidak ada flag bernilai 1' };
+    if (blok.flag.catatanWajib !== false && !blok.flag.catatanPerField && !opsi.teksCatatan) return { status: 'DILEWATI: kolom catatan kosong untuk baris ini' };
   }
 
   await limiter.tunggu('filter');
@@ -214,10 +224,28 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
   }
 
   await limiter.tunggu('filter');
-  const ke = await jalankanDiTab('klikEdit', { css: CONFIG.EDIT_CSS, ms: 10000 });
-  const nEdit = jumlahDari(ke);
+  let nEdit = jumlahDari(await jalankanDiTab('klikEdit', { css: CONFIG.EDIT_CSS, ms: 10000 }));
   if (nEdit === 0 && (await butuhLogin(true))) throw new SesiHabis();
-  if (nEdit !== 1) return { status: `PERLU CEK MANUAL: tombol Edit ditemukan ${nEdit}${langsung ? ' (link langsung: pastikan URL = halaman detail yang memuat tombol Edit)' : ''}` };
+  let revoked = false;
+  if (nEdit === 0) {
+    // Assignment approved kadang tidak menampilkan Edit. Ikuti alur mode KBLI:
+    // Revoke dulu, tunggu refresh, lalu cari dan klik Edit ulang.
+    await limiter.tunggu('filter');
+    const siapRefresh = tungguTab(workTabId, 15000).catch(() => null);
+    const revoke = await jalankanDiTab('revoke', { css: CONFIG.REVOKE_CSS, ms: 10000 });
+    const hasilRevoke = revoke.find((x) => x && x.jumlah !== undefined);
+    if (!hasilRevoke || hasilRevoke.jumlah !== 1 || !hasilRevoke.dikonfirmasi) {
+      return {
+        status: 'PERLU CEK MANUAL: tombol Edit tidak ada dan Revoke tidak berhasil',
+        detail: (hasilRevoke && hasilRevoke.pesan) || 'tombol Revoke tidak ditemukan atau konfirmasi gagal',
+      };
+    }
+    revoked = true;
+    await siapRefresh;
+    await limiter.tunggu('filter');
+    nEdit = jumlahDari(await jalankanDiTab('klikEdit', { css: CONFIG.EDIT_CSS, ms: 10000 }));
+  }
+  if (nEdit !== 1) return { status: `PERLU CEK MANUAL: tombol Edit ${revoked ? 'belum muncul setelah Revoke' : 'ditemukan ' + nEdit}${langsung ? ' (link langsung: pastikan URL = halaman detail yang memuat tombol Edit)' : ''}` };
   if (!(await tungguUrl((p) => /(?:^|\/)edit(?:\/|$)/.test(p), 10000))) {
     const tab = await chrome.tabs.get(workTabId).catch(() => null);
     return { status: 'GAGAL: halaman /edit tidak terbuka', detail: `URL setelah klik Edit: ${tab && (tab.url || tab.pendingUrl) || '(tidak terbaca)'}` };
@@ -345,40 +373,70 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
     return log(`${awalan}isi ${k}: GAGAL${v.alasan ? ` — ${v.alasan}` : ''}`);
   };
 
-  const jalankanPerField = async (op, argTambahan) => {
-    const out = {};
-    for (const k of pilih) {
-      const hasilField = gabung(
-        await jalankanDiTab(op, {
-          ...argTambahan,
-          fields: { [k]: fields[k] },
-          ...(argTambahan.nilai ? { nilai: { [k]: nilai[k] } } : {}),
-        }),
-      );
-      out[k] = hasilField[k];
-      logField(op === 'cek' ? 'cek' : 'isi', k, out[k]);
-    }
-    return out;
+  const jalankanSatu = async (op, k, argTambahan) => {
+    const hasilField = gabung(
+      await jalankanDiTab(op, {
+        ...argTambahan,
+        fields: { [k]: fields[k] },
+        jedaMs: CONFIG.JEDA_FIELD_MS,
+        tungguFieldMs: fields[k] && fields[k].opsional ? CONFIG.TUNGGU_FIELD_OPSIONAL_MS : undefined,
+        ...(argTambahan.nilai ? { nilai: { [k]: nilai[k] } } : {}),
+      }),
+    );
+    const hasil = hasilField[k];
+    logField(op === 'cek' ? 'cek' : 'isi', k, hasil);
+    return hasil;
   };
 
-  let g = await jalankanPerField('cek', {});
-  const bermasalah = pilih.filter((k) => !g[k] || !g[k].ketemu || g[k].ambigu || g[k].tersembunyi || (blok.flag && g[k].terkunci));
-  if (mode === 'isi' && !bermasalah.length) {
-    // [BARU] Mode flag: teks catatan dari kolom Excel terpilih; hanya untuk field yang benar-benar terisi.
-    const catatanIsi = blok.flag
-      ? opsi.teksCatatan
-        ? { aktif: true, teks: opsi.teksCatatan, simpan: !!blok.flag.simpanCatatan, hanyaJikaBerhasil: true, jikaSama: !!blok.flag.catatanJikaSama }
+  const catatanIsi = blok.flag
+    ? blok.flag.catatanPerField
+      ? {
+          perField: Object.fromEntries(
+            pilih.map((k) => [k, { aktif: true, teks: opsi.teksCatatan && opsi.teksCatatan[k] ? opsi.teksCatatan[k] : '', simpan: !!blok.flag.simpanCatatan, hanyaJikaBerhasil: true, jikaSama: !!blok.flag.catatanJikaSama, jedaMs: CONFIG.JEDA_CATATAN_MS, dialogBukaMs: CONFIG.TUNGGU_DIALOG_CATATAN_MS, textareaMs: CONFIG.TUNGGU_TEXTAREA_CATATAN_MS, dialogTutupMs: CONFIG.TUNGGU_TUTUP_DIALOG_MS }]),
+          ),
+        }
+      : opsi.teksCatatan
+        ? { aktif: true, teks: opsi.teksCatatan, simpan: !!blok.flag.simpanCatatan, hanyaJikaBerhasil: true, jikaSama: !!blok.flag.catatanJikaSama, jedaMs: CONFIG.JEDA_CATATAN_MS }
         : { aktif: false }
-      : CONFIG.CATATAN || { aktif: false };
-    g = await jalankanPerField('isi', { nilai, catatan: catatanIsi });
+    : CONFIG.CATATAN || { aktif: false };
+
+  // Cek lalu isi per field. Field yang tidak ada dan ditandai opsional
+  // dilewati sendiri; field lain tetap lanjut tanpa menunggu cek global selesai.
+  let g = {};
+  for (const k of pilih) {
+    const hasilCek = await jalankanSatu('cek', k, {});
+    g[k] = hasilCek;
+    const sp = blok.fields[k] || {};
+    const catatanOpsionalKosong = sp.opsional && hasilCek && hasilCek.ketemu && blok.flag && blok.flag.catatanPerField && blok.flag.catatanWajib !== false && (!opsi.teksCatatan || !String(opsi.teksCatatan[k] || '').trim());
+    const tidakValid = !hasilCek || !hasilCek.ketemu || hasilCek.ambigu || hasilCek.tersembunyi || (blok.flag && hasilCek.terkunci) || catatanOpsionalKosong;
+    if (mode === 'isi' && !tidakValid) g[k] = await jalankanSatu('isi', k, { nilai, catatan: catatanIsi });
   }
+
+  const bermasalah = pilih.filter((k) => {
+    const sp = blok.fields[k] || {};
+    const v = g[k];
+    // Field opsional boleh tidak ada pada usaha tertentu; jika ada, tetap harus tunggal dan terlihat.
+    if (sp.opsional && (!v || !v.ketemu)) return false;
+    const catatanOpsionalKosong =
+      sp.opsional &&
+      v &&
+      v.ketemu &&
+      blok.flag &&
+      blok.flag.catatanPerField &&
+      blok.flag.catatanWajib !== false &&
+      (!opsi.teksCatatan || !String(opsi.teksCatatan[k] || '').trim());
+    return !v || !v.ketemu || v.ambigu || v.tersembunyi || (blok.flag && v.terkunci) || catatanOpsionalKosong;
+  });
 
   // [BARU] Mode flag: cek hasil pengisian sebelum langkah akhir.
   let gagalIsi = [];
   let adaPerubahan = true;
   let adaCatatanBaru = false;
   if (mode === 'isi' && blok.flag && !bermasalah.length) {
-    gagalIsi = pilih.filter((k) => !(g[k] && (g[k].diisi || g[k].sama)));
+    gagalIsi = pilih.filter((k) => {
+      const v = g[k];
+      return !(blok.fields[k] && blok.fields[k].opsional && (!v || !v.ketemu)) && !(v && (v.diisi || v.sama));
+    });
     adaPerubahan = pilih.some((k) => g[k] && g[k].diisi);
     adaCatatanBaru = pilih.some((k) => g[k] && g[k].catatan && g[k].catatan.ok && !g[k].catatan.dilewati && !g[k].catatan.sudahAda);
   }
@@ -390,7 +448,9 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
   let akhir = null;
   if (mode === 'isi' && !bermasalah.length && !gagalIsi.length && perluKirim && CONFIG.LANGKAH_AKHIR && CONFIG.LANGKAH_AKHIR.aktif) {
     // [BARU] kirimPembaruan: klik Kirim lalu Konfirmasi (menyimpan). Selain itu perilaku lama (dry-run).
-    const langkah = blok.flag && blok.flag.kirimPembaruan ? { ...CONFIG.LANGKAH_AKHIR, tahanDialog: false, konfirmasiKirim: true } : CONFIG.LANGKAH_AKHIR;
+    const langkah = blok.flag && blok.flag.kirimPembaruan
+      ? { ...CONFIG.LANGKAH_AKHIR, tahanDialog: false, konfirmasiKirim: true, jedaMs: CONFIG.JEDA_CATATAN_MS }
+      : { ...CONFIG.LANGKAH_AKHIR, jedaMs: CONFIG.JEDA_CATATAN_MS };
     try {
       akhir = (await jalankanDiTab('akhirCatatan', langkah)).find((x) => x && x.ok !== undefined);
     } catch (e) {
@@ -402,7 +462,7 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
   const detail = pilih
     .map((k) => {
       const v = g[k];
-      if (!v || !v.ketemu) return `${k}: TIDAK ADA`;
+      if (!v || !v.ketemu) return `${k}: ${blok.fields[k] && blok.fields[k].opsional ? 'tidak tersedia, dilewati' : 'TIDAK ADA'}`;
       if (v.tersembunyi) return `${k}: ADA TAPI TIDAK TAMPIL${ids(v)}`;
       if (v.ambigu) return `${k}: AMBIGU (${v.ambigu} kandidat)${ids(v)}`;
       if (mode === 'isi' && !bermasalah.length) {
@@ -428,7 +488,10 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
     .map((k) => (g[k] && g[k].catatan && g[k].catatan.teks ? String(g[k].catatan.teks) : ''))
     .filter(Boolean)
     .join(' | ');
-  const detailFlag = blok && blok.flag && mode === 'isi' ? `target (flag=1): ${pilih.join(', ')}` : '';
+  const detailFlag =
+    blok && blok.flag && mode === 'isi'
+      ? `${blok.flag.tanpaFlag ? 'target (semua field)' : 'target (flag=1)'}: ${pilih.join(', ')}`
+      : '';
   // [BARU] Kolom yang diubah: "kolom_excel = lama → baru" (hanya field yang benar-benar terisi).
   const fmtNilai = (norm, mentah) => (norm !== null && norm !== undefined ? String(norm) : String(mentah == null ? '' : mentah).trim() || '(kosong)');
   const perubahan =
@@ -891,12 +954,16 @@ async function mulai() {
   const flagCfg = blok && blok.flag ? blok.flag : null;
   const petaFlag = {};
   let kolomCatatan = '';
+  const petaCatatan = {};
   if (flagCfg) {
     document.querySelectorAll('#kolomUpdate select[data-flag]').forEach((sel) => {
       petaFlag[sel.dataset.flag] = sel.value;
     });
     const selCat = document.querySelector('#kolomUpdate select[data-catatan]');
     kolomCatatan = selCat ? selCat.value : '';
+    document.querySelectorAll('#kolomUpdate select[data-catatan-field]').forEach((sel) => {
+      petaCatatan[sel.dataset.catatanField] = sel.value;
+    });
   }
 
   if (!rows.length || !kolomLink) return log('Pilih file Excel dan kolom link dulu.');
@@ -910,11 +977,14 @@ async function mulai() {
   });
 
   if (flagCfg) {
-    const kelola = Object.keys(blok.fields).filter((k) => petaFlag[k]);
+    const kelola = flagCfg.tanpaFlag ? Object.keys(blok.fields) : Object.keys(blok.fields).filter((k) => petaFlag[k]);
     if (!kelola.length) return log('Pilih minimal satu kolom flag.');
     const tanpaNilai = kelola.filter((k) => !petaKolom[k]);
     if (tanpaNilai.length) return log('Pilih kolom nilai untuk: ' + tanpaNilai.join(', '));
-    if (flagCfg.catatanWajib !== false && !kolomCatatan) return log('Pilih kolom catatan.');
+    if (flagCfg.catatanPerField) {
+      const kurangCatatan = Object.keys(blok.fields).filter((k) => !petaCatatan[k]);
+      if (flagCfg.catatanWajib !== false && kurangCatatan.length) return log('Pilih kolom catatan untuk: ' + kurangCatatan.join(', '));
+    } else if (flagCfg.catatanWajib !== false && !kolomCatatan) return log('Pilih kolom catatan.');
     log(flagCfg.kirimPembaruan ? 'PERINGATAN: mode ini MENGIRIM perubahan (kirimPembaruan: true).' : 'Mode flag berjalan dry-run (tidak mengirim perubahan).');
     if (flagCfg.simpanCatatan) log('PERINGATAN: catatan akan DISIMPAN (simpanCatatan: true).');
   } else {
@@ -981,7 +1051,7 @@ async function mulai() {
           let pilihBaris = pilih;
           let masalahFlag = [];
           if (flagCfg) {
-            const pf = pilihDariFlag(baris, blok, petaKolom, petaFlag);
+            const pf = pilihDariFlag(baris, blok, petaKolom, petaFlag, petaCatatan);
             pilihBaris = pf.pilih;
             masalahFlag = pf.masalah;
           }
@@ -993,7 +1063,9 @@ async function mulai() {
               debug: $('debug').checked,
               blok,
               masalahFlag,
-              teksCatatan: flagCfg ? String(baris[kolomCatatan] == null ? '' : baris[kolomCatatan]).trim() : '',
+              teksCatatan: flagCfg && flagCfg.catatanPerField
+                ? Object.fromEntries(Object.entries(petaCatatan).map(([k, kol]) => [k, String(baris[kol] == null ? '' : baris[kol]).trim()]))
+                : flagCfg ? String(baris[kolomCatatan] == null ? '' : baris[kolomCatatan]).trim() : '',
               barisExcel,
             }),
           );

@@ -478,7 +478,7 @@
 
       if (blok.scrollIntoView) blok.scrollIntoView({ block: 'center' });
       blok.style.outline = '3px solid #16a34a';
-      await new Promise((r) => setTimeout(r, 400));
+      await new Promise((r) => setTimeout(r, Number(a.jedaMs) || 400));
       blok.style.outline = '';
 
       return {
@@ -624,7 +624,7 @@
 
       if (blok.scrollIntoView) blok.scrollIntoView({ block: 'center' });
       blok.style.outline = '3px solid #2563eb';
-      await new Promise((r) => setTimeout(r, 400));
+      await new Promise((r) => setTimeout(r, Number(a.jedaMs) || 400));
 
       let klikKe = 0;
       if (!targetVisible()) {
@@ -687,7 +687,7 @@
       const btn = tombol.el;
       if (btn.scrollIntoView) btn.scrollIntoView({ block: 'center' });
       btn.style.outline = '3px solid #dc2626';
-      await new Promise((r) => setTimeout(r, 700));
+      await new Promise((r) => setTimeout(r, Number(a.jedaMs) || 700));
 
       if (!a.klikKirim) {
         btn.style.outline = '';
@@ -1178,16 +1178,16 @@
     const dialog = await tunggu(() => {
       const d = [...document.querySelectorAll('[role="dialog"][data-expanded]')].filter(terlihat);
       return d.length ? d[d.length - 1] : null;
-    }, 4000);
+    }, Number(opsi && opsi.dialogBukaMs) || 4000);
     if (!dialog) return { ok: false, pesan: 'dialog Catatan tidak muncul' };
 
     // Tunggu textarea di dalam dialog.
     const ta = await tunggu(() => {
       const t = dialog.querySelector('textarea');
       return t && terlihat(t) ? t : null;
-    }, 3000);
+    }, Number(opsi && opsi.textareaMs) || 3000);
     if (!ta) {
-      await tutupDialog(dialog);
+      await tutupDialog(dialog, Number(opsi && opsi.dialogTutupMs) || 2000);
       return { ok: false, pesan: 'textarea catatan tidak ditemukan' };
     }
 
@@ -1197,7 +1197,7 @@
     const riwayat = bacaRiwayat(dialog);
     const terakhir = riwayat.length ? riwayat[riwayat.length - 1] : null;
     if (opsi && Array.isArray(opsi.lewatJika) && terakhir && opsi.lewatJika.includes(terakhir.teks)) {
-      await tutupDialog(dialog);
+      await tutupDialog(dialog, Number(opsi && opsi.dialogTutupMs) || 2000);
       return {
         ok: true,
         dilewati: true,
@@ -1212,7 +1212,7 @@
     const teksNorm = norm(teks);
     const adaDiRiwayat = riwayat.some((r) => norm(r.teks) === teksNorm);
     if (adaDiRiwayat) {
-      await tutupDialog(dialog);
+      await tutupDialog(dialog, Number(opsi && opsi.dialogTutupMs) || 2000);
       return {
         ok: true,
         dilewati: true,
@@ -1231,7 +1231,7 @@
     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(ta, teks);
     ta.dispatchEvent(new Event('input', { bubbles: true }));
     ta.dispatchEvent(new Event('change', { bubbles: true }));
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, Number(opsi && opsi.jedaMs) || 400));
 
     const tertahan = String(ta.value) === String(teks);
     ta.style.outline = '';
@@ -1240,16 +1240,16 @@
       const btnSimpan = dialog.querySelector('button[title="Simpan"]');
       if (btnSimpan) {
         btnSimpan.click();
-        await tunggu(() => !dialog.hasAttribute('data-expanded'), 3000);
+        await tunggu(() => !dialog.hasAttribute('data-expanded'), Number(opsi && opsi.dialogTutupMs) || 3000);
         // Pada sebagian halaman, tombol Simpan hanya menyimpan catatan
         // tetapi dialog tetap terbuka. Tutup secara eksplisit agar alur
         // berikutnya (termasuk tombol Kirim utama) tidak tertahan oleh dialog.
-        if (dialog.hasAttribute('data-expanded')) await tutupDialog(dialog);
+        if (dialog.hasAttribute('data-expanded')) await tutupDialog(dialog, Number(opsi && opsi.dialogTutupMs) || 2000);
         return { ok: tertahan, tertahan, teks, dikirim: true, baru: true, terakhir };
       }
     }
 
-    await tutupDialog(dialog);
+    await tutupDialog(dialog, Number(opsi && opsi.dialogTutupMs) || 2000);
 
     return { ok: tertahan, tertahan, teks, dikirim: false, baru: true, terakhir };
   }
@@ -1268,18 +1268,18 @@
     return { ok: true, riwayat, terakhir, adaCatatan: riwayat.length > 0 };
   }
 
-  async function tutupDialog(dialog) {
+  async function tutupDialog(dialog, timeoutMs = 2000) {
     const btn = dialog.querySelector('button[aria-label="Dismiss"]') || dialog.querySelector('button[aria-label="Close"]');
     if (btn) btn.click();
     else dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     // Tunggu dialog benar-benar tertutup (atribut data-expanded hilang).
-    await tunggu(() => !dialog.hasAttribute('data-expanded'), 2000);
+    await tunggu(() => !dialog.hasAttribute('data-expanded'), timeoutMs);
     return true;
   }
 
   async function cekAtauIsi(a, isIsi) {
     const nama = Object.keys(a.fields);
-    await tunggu(() => nama.some((k) => cariSemua(a.fields[k]).some(terlihat)), 10000);
+    await tunggu(() => nama.some((k) => cariSemua(a.fields[k]).some(terlihat)), Number(a.tungguFieldMs) || 10000);
     const out = {};
     let sebelumnya = null;
 
@@ -1309,7 +1309,7 @@
       if (el.scrollIntoView) el.scrollIntoView({ block: 'center' });
       el.style.outline = '3px solid #16a34a';
       // Jeda singkat supaya highlight terlihat oleh pengguna sebelum lanjut.
-      await new Promise((r) => setTimeout(r, 350));
+      await new Promise((r) => setTimeout(r, Number(a.jedaMs) || 350));
 
       out[k] = {
         ketemu: true,
@@ -1349,7 +1349,7 @@
           out[k].alasan = err;
         } else if (!biasa) out[k].diisi = true;
         else {
-          await new Promise((r) => setTimeout(r, 300));
+          await new Promise((r) => setTimeout(r, Number(a.jedaMs) || 300));
           out[k].diisi = (modeAngka ? angka(el.value) : String(el.value)) === baru;
           if (!out[k].diisi) out[k].alasan = 'nilai tidak tertahan setelah diisi';
         }
@@ -1358,10 +1358,11 @@
       // ---- catatan dry-run: hanya kalau mode isi dan ada konfigurasi ----
       // [BARU] hanyaJikaBerhasil: catatan hanya untuk field yang benar-benar terisi
       // (atau sudah sama bila jikaSama true). Tanpa flag ini perilaku lama dipertahankan.
-      const bolehCatatan = !a.catatan || !a.catatan.hanyaJikaBerhasil || out[k].diisi || (out[k].sama && a.catatan.jikaSama);
-      if (a.catatan && a.catatan.aktif && a.catatan.teks && bolehCatatan) {
+      const cfgCatatan = a.catatan && a.catatan.perField ? a.catatan.perField[k] : a.catatan;
+      const bolehCatatan = !cfgCatatan || !cfgCatatan.hanyaJikaBerhasil || out[k].diisi || (out[k].sama && cfgCatatan.jikaSama);
+      if (cfgCatatan && cfgCatatan.aktif && cfgCatatan.teks && bolehCatatan) {
         try {
-          out[k].catatan = await bukaDialogCatatan(el, sp.varId, a.catatan.teks, !!a.catatan.simpan);
+          out[k].catatan = await bukaDialogCatatan(el, sp.varId, cfgCatatan.teks, !!cfgCatatan.simpan, undefined, cfgCatatan);
         } catch (e) {
           out[k].catatan = { ok: false, pesan: 'error: ' + (e && e.message) };
         }

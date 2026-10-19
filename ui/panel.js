@@ -315,13 +315,18 @@ function renderKolomUpdate() {
           `<div class="field-row">` +
           `<span>${esc(nama)}</span>` +
           `<select data-k="${esc(nama)}" title="Kolom nilai">${opsiKol}</select>` +
-          `<select data-flag="${esc(nama)}" title="Kolom flag (diinput hanya bila = 1)">${opsiKol}</select>` +
+          (blok.flag.tanpaFlag ? '' : `<select data-flag="${esc(nama)}" title="Kolom flag (diinput hanya bila = 1)">${opsiKol}</select>`) +
           `<small class="pratinjau" data-info="${esc(nama)}"></small>` +
           `</div>`,
       )
       .join('');
-    const barisCatatan = `<div class="field-row"><span>Kolom catatan</span><select data-catatan="1">${opsiKol}</select><small class="pratinjau" data-info="catatan"></small></div>`;
-    $('kolomUpdate').innerHTML = barisField + barisCatatan;
+    const barisCatatan = blok.flag.catatanPerField
+      ? ''
+      : `<div class="field-row"><span>Kolom catatan</span><select data-catatan="1">${opsiKol}</select><small class="pratinjau" data-info="catatan"></small></div>`;
+    const barisCatatanField = blok.flag.catatanPerField
+      ? Object.keys(blok.fields).map((nama) => `<div class="field-row"><span>${esc(nama)} — catatan</span><select data-catatan-field="${esc(nama)}" title="Kolom catatan untuk field ini">${opsiKol}</select><small class="pratinjau" data-info="catatan-${esc(nama)}"></small></div>`).join('')
+      : '';
+    $('kolomUpdate').innerHTML = barisField + barisCatatan + barisCatatanField;
 
     const perbarui = (sel, kunci) => {
       const el = [...$('kolomUpdate').querySelectorAll('small.pratinjau')].find((s) => s.dataset.info === kunci);
@@ -337,9 +342,12 @@ function renderKolomUpdate() {
           kunci = sel.dataset.k;
         } else if (sel.dataset.flag !== undefined) {
           tebakan = blok.fields[sel.dataset.flag].flagKolom;
-        } else {
+        } else if (sel.dataset.catatan !== undefined) {
           tebakan = blok.flag.catatanKolom;
           kunci = 'catatan';
+        } else {
+          tebakan = blok.fields[sel.dataset.catatanField].catatanKolom;
+          kunci = 'catatan-' + sel.dataset.catatanField;
         }
         const ketemu = cari(tebakan);
         if (ketemu) sel.value = ketemu;

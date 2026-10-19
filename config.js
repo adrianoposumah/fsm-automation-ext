@@ -43,6 +43,19 @@ const CONFIG = {
   // Jitter hanya MENAMBAH (0–1× nilai) supaya tidak terlalu teratur.
   JEDA_ANTAR_BARIS_S: 3,
 
+  // Jeda antar pemeriksaan/pengisian field di halaman. Nilai lebih kecil
+  // mempercepat alur, tetapi tetap memberi waktu komponen form memproses event.
+  JEDA_FIELD_MS: 150,
+
+  // Jeda setelah textarea catatan diisi sebelum tombol Simpan ditekan.
+  JEDA_CATATAN_MS: 150,
+
+  // Timeout khusus alur catatan dan field opsional.
+  TUNGGU_FIELD_OPSIONAL_MS: 2500,
+  TUNGGU_DIALOG_CATATAN_MS: 2000,
+  TUNGGU_TEXTAREA_CATATAN_MS: 1400,
+  TUNGGU_TUTUP_DIALOG_MS: 1000,
+
   // Kalkulasi total & skip jika minus.
   //   pengeluaran = gaji + biaya_produksi + biaya_pembelian + operasional + non_operasional
   //   pendapatan  = nilai_pendapatan + pendapatan_lain
@@ -200,6 +213,66 @@ const BLOKS = {
     },
   },
 
+  // Blok II: semua field diproses, dengan catatan terpisah untuk setiap field.
+  // Mode ini tetap dry-run: nilai dan catatan diisi di form, tetapi tidak dikirim.
+  'blok2-usaha-flag-catatan-field': {
+    judul: 'Update Usaha + Catatan per Field (Blok II)',
+    sidebar: {
+      blok: 'SE2026 - L BLOK II',
+      grup: 'Keterangan Usaha/Perusahaan',
+      item: {
+        kolomExcel: 'nama_usaha',
+        cocok: 'longgar',
+        wajibTepat: 1,
+      },
+    },
+    identitas: {
+      varId: 'nama_komersial',
+      label: 'Nama komersial',
+    },
+    fields: {
+      'Nilai Pendapatan': {
+        varId: 'nilai_pendapatan',
+        tipe: 'angka',
+        kolom: ['nilai_pendapatan'],
+        flagKolom: ['nilai_pendapatan_flag'],
+        catatanKolom: ['catatan_nilai_pendapatan', 'nilai_pendapatan_catatan'],
+      },
+      'Biaya Produksi': {
+        varId: 'biaya_produksi',
+        tipe: 'angka',
+        kolom: ['biaya_produksi'],
+        flagKolom: ['biaya_produksi_flag'],
+        catatanKolom: ['catatan_biaya_produksi', 'biaya_produksi_catatan'],
+      },
+      'Biaya Pembelian': {
+        varId: 'biaya_pembelian',
+        tipe: 'angka',
+        opsional: true, // Jika field tidak ada di halaman usaha, lanjutkan field lain.
+        kolom: ['biaya_pembelian'],
+        flagKolom: ['biaya_pembelian_flag'],
+        catatanKolom: ['catatan_biaya_pembelian', 'biaya_pembelian_catatan'],
+      },
+      Operasional: {
+        varId: 'operasional',
+        tipe: 'angka',
+        kolom: ['operasional', 'biaya_operasional'],
+        flagKolom: ['operasional_flag', 'biaya_operasional_flag'],
+        catatanKolom: ['catatan_operasional', 'operasional_catatan'],
+      },
+    },
+    kalkulasiSkip: true,
+    flag: {
+      tanpaFlag: true,
+      catatanPerField: true,
+      catatanWajib: true,
+      catatanJikaSama: true,
+      simpanCatatan: true,
+      kirimPembaruan: true,
+      linkLangsung: true,
+    },
+  },
+
   // Validasi dan pembaruan KBLI berbasis kode. Nilai Excel lama wajib sama
   // dengan radio yang sedang terpilih; jika tidak sama, baris ditandai manual.
   'blok2-kbli': {
@@ -343,6 +416,11 @@ const MODES = {
     judul: 'Isi usaha per flag — Blok II (kolom custom)',
     aksi: 'isi',
     blok: 'blok2-usaha-flag',
+  },
+  'isi-usaha-flag-catatan-field': {
+    judul: 'Isi usaha + catatan per field — Blok II (tanpa simpan)',
+    aksi: 'isi',
+    blok: 'blok2-usaha-flag-catatan-field',
   },
   'kbli-validasi-update': {
     judul: 'Validasi & Update KBLI Usaha — Blok II',
