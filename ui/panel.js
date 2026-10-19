@@ -129,7 +129,7 @@ function pasangPanel() {
   $('btnLog').onclick = () => {
     if (!hasil.length) return log('Belum ada hasil.');
     const wb = XLSX.utils.book_new();
-    const kolom = ['baris_excel', 'link', 'nama_usaha', 'mode', 'status', 'detail', 'perubahan', 'catatan', 'identitas', 'total_pendapatan', 'total_pengeluaran', 'selisih', 'konfirmasi_awal', 'konfirmasi_akhir', 'waktu'];
+    const kolom = ['baris_excel', 'link', 'nama_usaha', 'mode', 'kode', 'status', 'detail', 'perubahan', 'catatan', 'identitas', 'total_pendapatan', 'total_pengeluaran', 'selisih', 'konfirmasi_awal', 'konfirmasi_akhir', 'waktu'];
     const data = hasil.map((baris) => Object.fromEntries(kolom.map((k) => [k, baris[k] ?? ''])));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data, { header: kolom }), 'log');
     XLSX.writeFile(wb, `log_${Date.now()}.xlsx`);
@@ -224,15 +224,43 @@ function renderKolomUpdate() {
     return;
   }
 
-  // ── Mode KK: 5 kolom tetap (info / input / validasi), tanpa checkbox ──
-  if (mode.aksi === 'kk') {
-    const daftar = [
-      { kunci: 'no_kk_awal', label: 'No KK awal (info)', kolom: blok.info.no_kk_awal.kolom },
-      { kunci: 'konfirmasi', label: 'Konfirmasi 1/2/3 (info)', kolom: blok.info.konfirmasi.kolom },
-      { kunci: 'kk_usul', label: 'KK usul (diinput)', kolom: blok.fields['Nomor KK'].kolom },
-      { kunci: 'nik_usul', label: 'NIK usul (validasi)', kolom: blok.validasi.nik.kolom },
-      { kunci: 'nama_nik', label: 'Nama NIK (validasi)', kolom: blok.validasi.nama.kolom },
+  // Mode KBLI memakai tiga kolom terpisah: kode lama, kode baru, dan catatan.
+  if (mode.aksi === 'kbli') {
+    const opsi = `<option value="">(pilih kolom)</option>` + kolom.map((k) => `<option value="${esc(k)}">${esc(k)}</option>`).join('');
+    const definisi = [
+      ['lama', 'KBLI lama (validasi)', blok.fields['Kode KBLI'].kolomLama],
+      ['baru', 'KBLI baru/final (kosong = dilewati)', blok.fields['Kode KBLI'].kolomBaru],
+      ['catatan', 'Catatan KBLI', blok.fields['Kode KBLI'].kolomCatatan],
     ];
+    $('kolomUpdate').innerHTML = definisi.map(([k, label]) =>
+      `<div class="field-row"><span>${esc(label)}</span><select data-kbli="${k}">${opsi}</select></div>`).join('');
+    $('kolomUpdate').querySelectorAll('select').forEach((sel) => {
+      const d = definisi.find((x) => x[0] === sel.dataset.kbli);
+      const tebakan = (d[2] || []).map((x) => x.toLowerCase());
+      const ketemu = kolom.find((x) => tebakan.includes(x.trim().toLowerCase()));
+      if (ketemu) sel.value = ketemu;
+    });
+    $('kolomUsaha').disabled = false;
+    $('kecocokan').disabled = false;
+    return;
+  }
+
+  // ── Mode KK: kolom khusus, tanpa checkbox ──
+  if (mode.aksi === 'kk' || mode.aksi === 'kk-validasi') {
+    const daftar = mode.aksi === 'kk'
+      ? [
+          { kunci: 'no_kk_awal', label: 'No KK awal (info)', kolom: blok.info.no_kk_awal.kolom },
+          { kunci: 'konfirmasi', label: 'Konfirmasi 1/2/3 (info)', kolom: blok.info.konfirmasi.kolom },
+          { kunci: 'kk_usul', label: 'KK usul (diinput)', kolom: blok.fields['Nomor KK'].kolom },
+          { kunci: 'nik_usul', label: 'NIK usul (validasi)', kolom: blok.validasi.nik.kolom },
+          { kunci: 'nama_nik', label: 'Nama NIK (validasi)', kolom: blok.validasi.nama.kolom },
+        ]
+      : [
+          { kunci: 'kk_usul', label: 'KK usul (validasi no_kk)', kolom: blok.fields['Nomor KK'].kolom },
+          { kunci: 'nik_usul', label: 'NIK usul (validasi)', kolom: blok.validasi.nik.kolom },
+          { kunci: 'nama_nik', label: 'Nama NIK (validasi)', kolom: blok.validasi.nama.kolom },
+          { kunci: 'catatan_akhir', label: 'Catatan akhir (validasi)', kolom: blok.validasi.catatanAkhir.kolom },
+        ];
     const opsi = `<option value="">(pilih kolom)</option>` + kolom.map((k) => `<option value="${esc(k)}">${esc(k)}</option>`).join('');
     $('kolomUpdate').innerHTML = daftar
       .map((d) => `<div class="field-row">` + `<span>${esc(d.label)}</span>` + `<select data-kk="${esc(d.kunci)}">${opsi}</select>` + `<small class="pratinjau" data-kk="${esc(d.kunci)}"></small>` + `</div>`)

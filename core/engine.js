@@ -75,6 +75,106 @@ async function catatKK(kode, cfg) {
   }
 }
 
+// Validasi cepat Blok P: berhenti di halaman Review dan tidak pernah membuka /edit.
+async function alurKKValidasi(baris, link, petaKK, limiter) {
+  const blokP = BLOKS['blokP-kk'];
+  const excel = (kunci) => {
+    const kol = petaKK[kunci];
+    return kol ? String(baris[kol] ?? '').trim() : '';
+  };
+  const kkUsul = excel('kk_usul');
+  const nikUsul = excel('nik_usul');
+  const namaNIKExcel = excel('nama_nik');
+  const catatanAkhir = excel('catatan_akhir');
+
+  const langsung = !!(blokP.validasiKK && blokP.validasiKK.linkLangsung);
+  await limiter.tunggu('filter');
+  await buka(link, limiter);
+  let href = link;
+  if (!langsung) {
+    const rv = await jalankanDiTab('reviewHref', { teks: CONFIG.TEKS_REVIEW, ms: 10000 });
+    const nRev = jumlahDari(rv);
+    if (nRev === 0 && (await butuhLogin(true))) throw new SesiHabis();
+    if (nRev !== 1) return { status: `PERLU CEK MANUAL: tombol Review ditemukan ${nRev}` };
+    href = rv.find((r) => r.jumlah === 1).href;
+    if (new URL(href).host !== CONFIG.HOST) return { status: 'PERLU CEK MANUAL: link Review mengarah ke host lain' };
+
+    await limiter.tunggu('filter');
+    await buka(href, limiter);
+  }
+
+  let nikH = '';
+  let namaH = '';
+  let identitas = '';
+  if (nikUsul && namaNIKExcel) {
+    await limiter.tunggu('filter');
+    const ru1 = (
+      await jalankanDiTab('usaha', {
+        blok: 'SE2026 - L BLOK I',
+        grup: 'Keterangan Anggota Keluarga',
+        nama: namaNIKExcel,
+        longgar: true,
+        debug: false,
+        fieldVarIds: ['nik_dtsen', 'nama_dtsen'],
+      })
+    ).find((r) => r.ada);
+    if (!ru1 && (await butuhLogin(true))) throw new SesiHabis();
+    if (!ru1 || !ru1.ok) return { status: 'PERLU CEK MANUAL: L BLOK I tidak bisa dibuka untuk validasi' };
+    const rNilai = (await jalankanDiTab('bacaIdentitas', { varId: ['nik_dtsen', 'nama_dtsen'] })).find((x) => x.utama);
+    const nilai = rNilai ? rNilai.nilai : {};
+    nikH = String(nilai.nik_dtsen ?? '').trim();
+    namaH = String(nilai.nama_dtsen ?? '').trim();
+    identitas = `Anggota: "${namaH || '(kosong)'}" (NIK ${nikH || '-'})`;
+  }
+
+  await limiter.tunggu('filter');
+  const rBlokP = (
+    await jalankanDiTab('bukaBlok', { blok: blokP.sidebar.blok, fieldVarIds: ['no_kk'] })
+  ).find((x) => x && x.ada);
+  if (!rBlokP || !rBlokP.ok || !rBlokP.formMuncul)
+    return {
+      status: 'PERLU CEK MANUAL: field no_kk tidak tampil di halaman Review',
+      detail: (rBlokP && rBlokP.pesan) || 'Blok P atau field no_kk tidak ditemukan',
+      identitas,
+    };
+
+  const noKK = (await jalankanDiTab('bacaNilai', { varId: 'no_kk' })).find((x) => x && x.utama);
+  const noKKH = noKK && noKK.ketemu && !noKK.ambigu ? String(noKK.nilai || '').trim() : '';
+  if (!noKK || !noKK.ketemu || noKK.ambigu)
+    return { status: 'PERLU CEK MANUAL: nilai no_kk tidak tunggal di halaman Review', detail: noKK && noKK.ambigu ? `no_kk ambigu (${noKK.ambigu})` : 'no_kk tidak ditemukan', identitas };
+
+  const cat = (await jalankanDiTab('bacaCatatan', { varId: 'no_kk' })).find((x) => x && x.utama);
+  if (!cat || !cat.ok) return { status: 'PERLU CEK MANUAL: riwayat catatan no_kk tidak dapat dibaca', detail: (cat && cat.pesan) || 'catatan tidak terbaca', identitas };
+
+  const normNama = (v) => String(v || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const nikCocok = !!nikUsul && nikH === nikUsul;
+  const namaCocok = !!namaNIKExcel && normNama(namaH) === normNama(namaNIKExcel);
+  const kkCocok = !!kkUsul && noKKH === kkUsul;
+  const catatanAda = !!catatanAkhir && (cat.riwayat || []).some((x) => normNama(x.teks) === normNama(catatanAkhir));
+  const catatanTerakhirSama = !!catatanAkhir && cat.terakhir && normNama(cat.terakhir.teks) === normNama(catatanAkhir);
+  const detail = [
+    `no_kk halaman="${noKKH || '-'}" vs kk_usul="${kkUsul || '-'}" (${kkCocok ? 'OK' : 'BEDA'})`,
+    `NIK halaman="${nikH || '-'}" vs Excel="${nikUsul || '-'}" (${nikCocok ? 'OK' : 'BEDA'})`,
+    `nama halaman="${namaH || '-'}" vs Excel="${namaNIKExcel || '-'}" (${namaCocok ? 'OK' : 'BEDA'})`,
+    `catatan akhir="${catatanAkhir || '-'}" (${catatanAda ? 'sudah ada' : 'belum ada'}, terakhir ${catatanTerakhirSama ? 'sama' : 'berbeda'})`,
+  ].join('; ');
+  const kodeMasalah = [];
+  if (!kkCocok) kodeMasalah.push('NO_KK_BERBEDA');
+  if (!nikCocok) kodeMasalah.push('NIK_BERBEDA');
+  if (!namaCocok) kodeMasalah.push('NAMA_BERBEDA');
+  if (!catatanAda) kodeMasalah.push('CATATAN_TIDAK_ADA');
+  else if (!catatanTerakhirSama) kodeMasalah.push('CATATAN_TIDAK_SAMA');
+  const semuaCocok = kodeMasalah.length === 0;
+  return {
+    kode: semuaCocok ? 'VALIDASI_OK' : kodeMasalah.join(','),
+    status: semuaCocok ? 'VALIDASI OK: no_kk, NIK, nama, dan catatan sesuai' : `VALIDASI GAGAL: ${kodeMasalah.join(', ')}`,
+    detail: `${langsung ? 'link langsung ke detail' : 'link melalui Review'}; ${detail}`,
+    identitas,
+    catatan: catatanAkhir,
+    validasi: { noKKH, kkUsul, nikH, nikUsul, namaH, namaNIKExcel, catatanAkhir, catatanAda, catatanTerakhirSama, jumlahCatatan: (cat.riwayat || []).length },
+  };
+}
+
 async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
   const blok = opsi.blok;
   if (!blok && mode !== 'review') return { status: 'PERLU CEK MANUAL: blok tidak dikenal' };
@@ -118,7 +218,10 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
   const nEdit = jumlahDari(ke);
   if (nEdit === 0 && (await butuhLogin(true))) throw new SesiHabis();
   if (nEdit !== 1) return { status: `PERLU CEK MANUAL: tombol Edit ditemukan ${nEdit}${langsung ? ' (link langsung: pastikan URL = halaman detail yang memuat tombol Edit)' : ''}` };
-  if (!(await tungguUrl((p) => /\/edit\/?$/.test(p), 10000))) return { status: 'GAGAL: halaman /edit tidak terbuka' };
+  if (!(await tungguUrl((p) => /(?:^|\/)edit(?:\/|$)/.test(p), 10000))) {
+    const tab = await chrome.tabs.get(workTabId).catch(() => null);
+    return { status: 'GAGAL: halaman /edit tidak terbuka', detail: `URL setelah klik Edit: ${tab && (tab.url || tab.pendingUrl) || '(tidak terbaca)'}` };
+  }
 
   // --- Buka blok sidebar (dengan atau tanpa pemilihan item) ---
   await limiter.tunggu('filter');
@@ -338,6 +441,123 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
   return { status, detail: detailFlag ? `${detailFlag} | ${detail}` : detail, identitas: teksIdn, akhir, kalk, catatan, perubahan, namaUsaha: opsi.namaUsaha };
 }
 
+// Alur khusus KBLI: validasi optimistic-lock (KBLI lama di Excel harus sama
+// dengan pilihan halaman), pilih kode baru dari radio group, lalu proses catatan.
+async function alurKBLI(baris, link, petaKBLI, limiter) {
+  const blok = BLOKS['blok2-kbli'];
+  const cfg = blok.kbli || {};
+  const val = (k) => petaKBLI[k] ? String(baris[petaKBLI[k]] ?? '').trim() : '';
+  const lama = val('lama');
+  const baru = val('baru');
+  // KBLI baru dan KBLI final memakai kolom Excel yang sama.
+  const final = val('baru');
+  const teksCatatan = val('catatan');
+  if (!final) return { status: 'DILEWATI: KBLI final kosong' };
+  if (!lama || !baru) return { status: 'DILEWATI: kolom KBLI lama atau baru kosong' };
+  if (cfg.catatanWajib !== false && !teksCatatan) return { status: 'DILEWATI: kolom catatan KBLI kosong' };
+
+  await limiter.tunggu('filter');
+  await buka(link, limiter);
+  let href = link;
+  if (!cfg.linkLangsung) {
+    const rv = await jalankanDiTab('reviewHref', { teks: CONFIG.TEKS_REVIEW, ms: 10000 });
+    const nRev = jumlahDari(rv);
+    if (nRev === 0 && (await butuhLogin(true))) throw new SesiHabis();
+    if (nRev !== 1) return { status: `PERLU CEK MANUAL: tombol Review ditemukan ${nRev}` };
+    href = rv.find((r) => r.jumlah === 1).href;
+    await limiter.tunggu('filter');
+    await buka(href, limiter);
+  }
+  // Samakan dengan alur Update Usaha per Flag: langsung jalankan klikEdit.
+  // Assignment approved yang tidak punya Edit kemudian ditangani dengan Revoke.
+  await limiter.tunggu('filter');
+  let nEdit = jumlahDari(await jalankanDiTab('klikEdit', { css: CONFIG.EDIT_CSS, ms: 10000 }));
+  if (nEdit === 0 && (await butuhLogin(true))) throw new SesiHabis();
+  let revoked = false;
+  if (nEdit === 0) {
+    await limiter.tunggu('filter');
+    const siapRefresh = tungguTab(workTabId, 15000).catch(() => null);
+    const revoke = await jalankanDiTab('revoke', { css: CONFIG.REVOKE_CSS, ms: 10000 });
+    const hasilRevoke = revoke.find((x) => x && x.jumlah !== undefined);
+    if (!hasilRevoke || hasilRevoke.jumlah !== 1 || !hasilRevoke.dikonfirmasi)
+      return {
+        status: 'PERLU CEK MANUAL: tombol Edit tidak ada dan Revoke tidak berhasil',
+        detail: (hasilRevoke && hasilRevoke.pesan) || 'tombol Revoke tidak ditemukan atau konfirmasi gagal',
+      };
+    revoked = true;
+    await siapRefresh;
+    nEdit = jumlahDari(await jalankanDiTab('klikEdit', { css: CONFIG.EDIT_CSS, ms: 10000 }));
+  }
+  if (nEdit !== 1) return { status: `PERLU CEK MANUAL: tombol Edit ${revoked ? 'belum muncul setelah Revoke' : 'ditemukan ' + nEdit}` };
+  if (!(await tungguUrl((p) => /(?:^|\/)edit(?:\/|$)/.test(p), 10000))) {
+    const tab = await chrome.tabs.get(workTabId).catch(() => null);
+    return { status: 'GAGAL: halaman /edit tidak terbuka', detail: `URL setelah klik Edit: ${tab && (tab.url || tab.pendingUrl) || '(tidak terbaca)'}` };
+  }
+
+  await limiter.tunggu('filter');
+  const ru = (await jalankanDiTab('usaha', {
+    blok: blok.sidebar.blok,
+    grup: blok.sidebar.grup,
+    nama: String(baris[petaKBLI.namaUsaha] || ''),
+    longgar: true,
+    fieldVarIds: [blok.fields['Kode KBLI'].varId],
+    varIdIdentitas: blok.identitas.varId,
+  })).find((r) => r.ada);
+  if (!ru) return { status: 'PERLU CEK MANUAL: usaha KBLI tidak ditemukan di sidebar' };
+  if (!ru.ok) return { status: 'PERLU CEK MANUAL: ' + (ru.pesan || 'usaha KBLI tidak bisa dibuka') };
+
+  const r = (await jalankanDiTab('kbli', {
+    varId: blok.fields['Kode KBLI'].varId,
+    lama,
+    baru,
+    catatan: { teks: teksCatatan, simpan: !!cfg.simpanCatatan, delayMs: cfg.catatanDelayMs || 1500 },
+  })).find((x) => x && x.utama);
+  if (!r || !r.ketemu) return { status: 'PERLU CEK MANUAL: field KBLI tidak ditemukan', detail: r && r.pesan };
+  if (r.ambigu) return { status: 'PERLU CEK MANUAL: field KBLI ambigu', detail: r.pesan };
+  if (r.alasan && !r.sama && !r.diubah) return { status: 'PERLU CEK MANUAL: ' + r.alasan, detail: `${lama} → ${baru}` };
+
+  // Dialog Catatan sudah dibuka dari operasi KBLI setelah scroll/pemilihan.
+  const catatan = r.catatan;
+  if (!catatan || !catatan.ok) return { status: 'PERLU CEK MANUAL: catatan KBLI gagal diproses', detail: catatan && catatan.pesan };
+
+  let akhir = null;
+  const adaCatatanBaru = !!(catatan.ok && !catatan.dilewati && !catatan.sudahAda);
+  const perluKirim = r.diubah || adaCatatanBaru;
+  if (perluKirim && cfg.kirimPembaruan && CONFIG.LANGKAH_AKHIR && CONFIG.LANGKAH_AKHIR.aktif) {
+    // Sama dengan mode Update Usaha per Flag: buka blok CATATAN,
+    // klik Kirim utama, lalu klik Konfirmasi pada dialog berikutnya.
+    const langkah = {
+      ...CONFIG.LANGKAH_AKHIR,
+      blok: 'CATATAN',
+      klikKirim: true,
+      tahanDialog: false,
+      konfirmasiKirim: true,
+    };
+    try {
+      akhir = (await jalankanDiTab('akhirCatatan', langkah)).find((x) => x && x.ok !== undefined);
+    } catch (e) {
+      akhir = { ok: false, pesan: 'error: ' + (e && e.message) };
+    }
+  }
+  const label = r.baruLabel || r.sekarangLabel || '';
+  const perubahan = r.diubah ? `${lama} → ${baru}${label ? ` (${label})` : ''}` : `${r.sekarang || lama} (sudah sesuai)`;
+  const terkirim = !!(akhir && akhir.ok && (akhir.dikirim || (akhir.dialog && akhir.dialog.dikonfirmasi)));
+  const catatanAda = !!(catatan.sudahAda || catatan.dilewati);
+  const status = perluKirim
+    ? cfg.kirimPembaruan
+      ? terkirim ? (r.diubah ? 'KBLI DIUPDATE & DIKIRIM' : 'CATATAN DIISI & DIKIRIM') : 'PERLU CEK MANUAL: pembaruan KBLI/catatan belum terkirim'
+      : r.diubah ? 'DRY-RUN: KBLI diubah, tidak disimpan' : 'DRY-RUN: catatan diisi, tidak dikirim'
+    : catatanAda ? 'VALIDASI OK: KBLI & catatan sudah sesuai' : 'VALIDASI OK: KBLI sesuai, catatan diproses';
+  return {
+    status,
+    kode: perluKirim ? (cfg.kirimPembaruan && terkirim ? 'KBLI_UPDATE_OK' : 'DRY_RUN') : 'KBLI_VALIDASI_OK',
+    detail: `KBLI halaman=${r.sekarang || '-'}, lama Excel=${lama}, baru Excel=${baru}; catatan ${catatanAda ? 'sudah ada dan sama' : (catatan.dikirim ? 'disimpan' : 'terisi/tidak disimpan')}`,
+    perubahan,
+    catatan: teksCatatan,
+    namaUsaha: String(baris[petaKBLI.namaUsaha] || ''),
+  };
+}
+
 async function alurKK(baris, link, petaKK, limiter) {
   const blok1 = BLOKS['blok1-keluarga'];
   const blokP = BLOKS['blokP-kk'];
@@ -489,7 +709,7 @@ async function alurKK(baris, link, petaKK, limiter) {
   // 11) Klik Edit (semua pencatatan dilakukan di halaman /edit)
   await limiter.tunggu('filter');
   await jalankanDiTab('klikEdit', { css: CONFIG.EDIT_CSS, ms: 10000 });
-  if (!(await tungguUrl((p) => /\/edit\/?$/.test(p), 10000)))
+  if (!(await tungguUrl((p) => /(?:^|\/)edit(?:\/|$)/.test(p), 10000)))
     return {
       status: 'GAGAL: halaman /edit tidak terbuka',
       detail: detailValidasi,
@@ -636,14 +856,27 @@ async function mulai() {
   const aksi = mode.aksi;
   const blok = mode.blok ? BLOKS[mode.blok] : null;
 
+  // Mode KBLI: peta kolom lama/baru/catatan dari panel.
+  let petaKBLI = null;
+  if (aksi === 'kbli') {
+    petaKBLI = { namaUsaha: $('kolomUsaha').value };
+    document.querySelectorAll('#kolomUpdate select[data-kbli]').forEach((sel) => {
+      petaKBLI[sel.dataset.kbli] = sel.value;
+    });
+    const kurang = ['lama', 'baru', 'catatan'].filter((k) => !petaKBLI[k]);
+    if (kurang.length) return log('Kolom KBLI belum dipilih: ' + kurang.join(', '));
+  }
+
   // Mode KK: 5 kolom khusus dari #kolomUpdate select[data-kk]
   let petaKK = null;
-  if (aksi === 'kk') {
+  if (aksi === 'kk' || aksi === 'kk-validasi') {
     petaKK = {};
     document.querySelectorAll('#kolomUpdate select[data-kk]').forEach((sel) => {
       petaKK[sel.dataset.kk] = sel.value;
     });
-    const wajib = ['no_kk_awal', 'konfirmasi', 'kk_usul', 'nik_usul', 'nama_nik'];
+    const wajib = aksi === 'kk'
+      ? ['no_kk_awal', 'konfirmasi', 'kk_usul', 'nik_usul', 'nama_nik']
+      : ['kk_usul', 'nik_usul', 'nama_nik', 'catatan_akhir'];
     const kurang = wajib.filter((k) => !petaKK[k]);
     if (kurang.length) return log('Kolom belum dipilih: ' + kurang.join(', '));
   }
@@ -700,7 +933,7 @@ async function mulai() {
 
   // [BARU] Mode KK: satu link dengan kk_usul berbeda antar baris = kemungkinan salah data Excel.
   const linkKonflik = new Set();
-  if (aksi === 'kk') {
+  if (aksi === 'kk' || aksi === 'kk-validasi') {
     const kkPerLink = new Map();
     for (const b of rows) {
       const l = String(b[kolomLink] || '').trim();
@@ -735,10 +968,14 @@ async function mulai() {
         if (!/^https:\/\//.test(link) || new URL(link).host !== CONFIG.HOST) {
           r = { status: 'DILEWATI: link kosong atau host tidak cocok' };
           // [BARU] cabang konflik
-        } else if (aksi === 'kk' && linkKonflik.has(link)) {
+        } else if ((aksi === 'kk' || aksi === 'kk-validasi') && linkKonflik.has(link)) {
           r = { status: 'PERLU CEK MANUAL: link yang sama punya kk_usul berbeda antar baris Excel' };
+        } else if (aksi === 'kbli') {
+          r = await denganSesi(() => alurKBLI(baris, link, petaKBLI, limiter));
         } else if (aksi === 'kk') {
           r = await denganSesi(() => alurKK(baris, link, petaKK, limiter));
+        } else if (aksi === 'kk-validasi') {
+          r = await denganSesi(() => alurKKValidasi(baris, link, petaKK, limiter));
         } else {
           // [BARU] field target dan catatan per baris (mode flag)
           let pilihBaris = pilih;
@@ -774,13 +1011,14 @@ async function mulai() {
       if (barisSebelumnya) r.detail = (r.detail ? r.detail + ' | ' : '') + `link sama dengan baris Excel ${barisSebelumnya}`;
       if (link) linkTerlihat.set(link, barisExcel);
 
-      const namaUsaha = (r && r.namaUsaha) || (kolomUsaha ? String(baris[kolomUsaha] || '').trim() : (aksi === 'kk' && petaKK && petaKK.nama_nik ? String(baris[petaKK.nama_nik] || '').trim() : ''));
+      const namaUsaha = (r && r.namaUsaha) || (kolomUsaha ? String(baris[kolomUsaha] || '').trim() : ((aksi === 'kk' || aksi === 'kk-validasi') && petaKK && petaKK.nama_nik ? String(baris[petaKK.nama_nik] || '').trim() : ''));
 
       hasil.push({
         baris_excel: barisExcel,
         link,
         nama_usaha: namaUsaha,
         mode: modeId,
+        kode: r.kode || '',
         status: r.status,
         detail: r.detail || '',
         perubahan: r.perubahan || '', // [BARU]

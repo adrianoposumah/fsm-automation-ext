@@ -106,7 +106,9 @@
   // Normalkan nilai rupiah jadi string bilangan bulat; null kalau bukan angka bulat.
   // Nilai berupa tanda strip ("-", "–", "—") dinormalkan menjadi "0".
   const angka = (v) => {
-    let t = String(v == null ? '' : v).replace(/rp/gi, '').replace(/\s/g, '');
+    let t = String(v == null ? '' : v)
+      .replace(/rp/gi, '')
+      .replace(/\s/g, '');
     if (t === '') return null;
     if (/^[-–—]+$/.test(t)) return '0';
     if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(t)) t = t.replace(/\./g, '').replace(',', '.');
@@ -275,7 +277,14 @@
       if (!target) return { ada: true, ok: false, total: daftar.length, pesan: 'nama usaha di Excel kosong' };
 
       // Helper pembersih kurung dan karakter ekstra
-      const bersihkan = (t) => norm(String(t || '').replace(/<[^>]*>/g, ' ').replace(/\([^)]*\)/g, ' ')).replace(/\s+/g, ' ').trim();
+      const bersihkan = (t) =>
+        norm(
+          String(t || '')
+            .replace(/<[^>]*>/g, ' ')
+            .replace(/\([^)]*\)/g, ' '),
+        )
+          .replace(/\s+/g, ' ')
+          .trim();
       const targetBersih = bersihkan(target);
 
       // Tahap 1: Kumpulkan kandidat dari sidebar
@@ -304,11 +313,10 @@
           ok: false,
           total: daftar.length,
           cocok: 0,
-          pesan:
-            `usaha di sidebar tidak ditemukan untuk "${a.nama}" (ada ${daftar.length}: ${daftar
-              .slice(0, 8)
-              .map((h) => '"' + h.getAttribute('title') + '"')
-              .join(', ')})`,
+          pesan: `usaha di sidebar tidak ditemukan untuk "${a.nama}" (ada ${daftar.length}: ${daftar
+            .slice(0, 8)
+            .map((h) => '"' + h.getAttribute('title') + '"')
+            .join(', ')})`,
         };
       }
 
@@ -367,8 +375,14 @@
         if (!f || !e) return false;
         if (f === e) return true;
 
-        const fPolos = f.replace(/[<>()\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
-        const ePolos = e.replace(/[<>()\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+        const fPolos = f
+          .replace(/[<>()\[\]]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        const ePolos = e
+          .replace(/[<>()\[\]]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
         if (fPolos === ePolos) return true;
         if (fPolos.includes(ePolos) || ePolos.includes(fPolos)) return true;
 
@@ -492,6 +506,36 @@
         out[v] = inp ? String(inp.value || '') : (w.textContent || '').trim().slice(0, 120);
       }
       return { utama, nilai: out };
+    },
+
+    async bacaNilai(a) {
+      const varId = a && a.varId;
+      if (!varId) return { utama, ketemu: false, pesan: 'varId tidak diberikan' };
+      let semua = [...document.querySelectorAll('[id^="' + varId + '#"]')].filter(terlihat);
+      if (!semua.length) {
+        const el = document.getElementById(varId);
+        if (el && terlihat(el)) semua = [el];
+      }
+      if (!semua.length) return { utama, ketemu: false, nilai: '' };
+      if (semua.length > 1) return { utama, ketemu: true, ambigu: semua.length, nilai: '' };
+      const el = semua[0];
+      const inp = el.querySelector(kontrol);
+      return { utama, ketemu: true, ambigu: 0, nilai: inp ? String(inp.value || '') : String(el.textContent || '').trim() };
+    },
+
+    async bacaCatatan(a) {
+      const varId = a && a.varId;
+      if (!varId) return { utama, ok: false, pesan: 'varId tidak diberikan' };
+      let w = [...document.querySelectorAll('[id^="' + varId + '#"]')].filter(terlihat);
+      if (!w.length) {
+        const el = document.getElementById(varId);
+        if (el && terlihat(el)) w = [el];
+      }
+      if (!w.length) return { utama, ok: false, pesan: `field ${varId} tidak ditemukan` };
+      if (w.length > 1) return { utama, ok: false, pesan: `field ${varId} ambigu (${w.length})` };
+      const inp = w[0].querySelector(kontrol);
+      if (!inp) return { utama, ok: false, pesan: `input ${varId} tidak ditemukan` };
+      return { utama, ...(await bacaRiwayatField(inp, varId, w[0])) };
     },
 
     async hitungSelisih(a) {
@@ -784,6 +828,253 @@
       return cekAtauIsi(a, true);
     },
 
+    // Field KBLI adalah radio group, bukan input teks/select. Kode dibandingkan
+    // dari atribut value, sedangkan deskripsi diambil dari label terkait.
+    async kbli(a) {
+      const varId = a && a.varId;
+      const normKode = (v) => {
+        const t = String(v == null ? '' : v)
+          .trim()
+          .replace(/\.0+$/, '');
+        // Kode KBLI selalu 5 digit; pertahankan/pulihkan nol di depan.
+        return /^\d+$/.test(t) ? (t.length <= 5 ? t.padStart(5, '0') : t) : '';
+      };
+      const labelRadio = (input) => {
+        if (!input) return '';
+        const id = input.getAttribute('aria-labelledby');
+        const l = id ? document.getElementById(id) : document.querySelector(`label[for="${CSS.escape(input.id)}"]`);
+        return (l ? l.textContent : '').trim() || ((input.parentElement && input.parentElement.textContent) || '').trim();
+      };
+      // Beberapa halaman memakai value internal (mis. 143211), sedangkan
+      // kode yang terlihat pengguna adalah 43211 di label pilihan.
+      const kodeRadio = (input) => {
+        const dariLabel = labelRadio(input).match(/\b\d{5}\b/);
+        return normKode(dariLabel ? dariLabel[0] : input && input.value);
+      };
+      // Tunggu form benar-benar selesai dirender. Jangan langsung jatuh ke
+      // Master KBLI saat field kbli_genai masih dalam proses memuat.
+      let wadah = [];
+      const mulaiTungguField = Date.now();
+      while (Date.now() - mulaiTungguField < 4000) {
+        wadah = varId ? [...document.querySelectorAll('[id^="' + varId + '#"]')].filter(terlihat) : [];
+        if (!wadah.length && varId) {
+          const e = document.getElementById(varId);
+          if (e && terlihat(e)) wadah = [e];
+        }
+        if (wadah.length && wadah.some((w) => w.querySelector('input[type="radio"]'))) break;
+        if ([...document.querySelectorAll('[id^="kbli#"]')].some(terlihat) && Date.now() - mulaiTungguField > 3000) break;
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      if (!wadah.length) {
+        const masterAwal = [...document.querySelectorAll('[id^="kbli#"]')].find(terlihat);
+        if (masterAwal) wadah = [masterAwal];
+      }
+      if (!wadah.length) return { utama, ketemu: false, pesan: `field ${varId || 'KBLI'} tidak ditemukan setelah menunggu form` };
+      if (wadah.length > 1) return { utama, ketemu: true, ambigu: wadah.length, pesan: 'field KBLI lebih dari satu' };
+      const root = wadah[0];
+      if (root.scrollIntoView) root.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      root.style.outline = '3px solid #2563eb';
+      const prosesCatatan = async (input, catatanVarId = varId, catatanRoot = root) => {
+        if (!a.catatan || !a.catatan.teks || !input) return null;
+        const freshRoot = [...document.querySelectorAll('[id^="' + catatanVarId + '#"]')].find(terlihat) || document.getElementById(catatanVarId) || catatanRoot;
+        const freshInput = (freshRoot && (freshRoot.querySelector('input[type="radio"]') || freshRoot.querySelector('textarea'))) || input;
+        return bukaDialogCatatan(freshInput, catatanVarId, a.catatan.teks, !!a.catatan.simpan, freshRoot, {
+          lewatJika: [a.catatan.teks],
+        });
+      };
+      const pilihMaster = async (masterRoot, lamaKode, baruKode, bukaCatatan) => {
+        const ambilArea = () => [...document.querySelectorAll('[id^="kbli#"] textarea')].find(terlihat) || masterRoot.querySelector('textarea');
+        let area = ambilArea();
+        const tombolBuka = [...masterRoot.querySelectorAll('button[aria-haspopup="dialog"]')].find(terlihat);
+        if (!area || !tombolBuka) return { utama, ketemu: false, pesan: 'kontrol Master KBLI tidak lengkap' };
+        if (masterRoot.scrollIntoView) masterRoot.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        // Pada kondisi tertentu nilai terpilih disimpan di placeholder, bukan
+        // value textarea. Keduanya harus divalidasi sebelum mengetik pencarian.
+        const teksLama = String(area.value || area.placeholder || '').trim();
+        const kodeLama = (teksLama.match(/\b\d{5}\b/) || [])[0] || '';
+        if (kodeLama && kodeLama === baruKode) {
+          masterRoot.style.outline = '3px solid #16a34a';
+          if (masterRoot.scrollIntoView) masterRoot.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          await new Promise((r) => setTimeout(r, Number(a.catatan && a.catatan.delayMs) || 1500));
+          const catatanSama = await bukaCatatan(area, 'kbli', masterRoot);
+          masterRoot.style.outline = '';
+          return {
+            utama,
+            ketemu: true,
+            ambigu: 0,
+            sekarang: kodeLama,
+            lama: lamaKode,
+            baru: baruKode,
+            diubah: false,
+            sama: true,
+            baruLabel: teksLama,
+            pilihanMaster: true,
+            catatan: catatanSama,
+          };
+        }
+        if (kodeLama && lamaKode && kodeLama !== lamaKode) return { utama, ketemu: true, sama: false, diubah: false, alasan: `KBLI Master halaman ${kodeLama} berbeda dari KBLI lama Excel ${lamaKode}` };
+        tombolBuka.click();
+        area = ambilArea() || area;
+        area.focus();
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(area, baruKode);
+        area.dispatchEvent(new Event('input', { bubbles: true }));
+        area.dispatchEvent(new Event('change', { bubbles: true }));
+        const cariOpsi = () => {
+          const dialog = [...document.querySelectorAll('[role="dialog"][data-expanded]')].filter(terlihat).pop();
+          if (!dialog || [...dialog.querySelectorAll('span')].some((s) => /memuat opsi/i.test(s.textContent || ''))) return [];
+          const semua = [...dialog.querySelectorAll('[role="listbox"] [role="option"]')].filter(terlihat);
+          const berdasarkanKey = semua.filter((x) => normKode(x.getAttribute('data-key')) === baruKode);
+          if (berdasarkanKey.length) return berdasarkanKey;
+          return semua.filter((x) => {
+            const key = normKode(x.getAttribute('data-key'));
+            const teks = String(x.textContent || '').replace(/\s+/g, ' ');
+            return key === baruKode || new RegExp('\\b' + baruKode + '\\b').test(teks);
+          });
+        };
+        const opsi = await (async () => {
+          const batas = Date.now() + 10000;
+          while (Date.now() < batas) {
+            const pertama = cariOpsi();
+            if (pertama.length >= 1) {
+              const tanda = `${pertama[0].getAttribute('data-key')}|${pertama[0].textContent}`;
+              await new Promise((r) => setTimeout(r, 450));
+              const kedua = cariOpsi();
+              if (kedua.length >= 1 && `${kedua[0].getAttribute('data-key')}|${kedua[0].textContent}` === tanda) return kedua;
+            }
+            await new Promise((r) => setTimeout(r, 200));
+          }
+          return [];
+        })();
+        if (!opsi || !opsi.length) {
+          masterRoot.style.outline = '';
+          return { utama, ketemu: true, sama: false, diubah: false, alasan: `opsi Master KBLI untuk ${baruKode} ditemukan ${opsi ? opsi.length : 0}` };
+        }
+        let tertahan = null;
+        let targetLabel = '';
+        for (let percobaan = 1; percobaan <= 3 && !tertahan; percobaan++) {
+          const target = cariOpsi()[0];
+          if (!target) {
+            await new Promise((r) => setTimeout(r, 300));
+            continue;
+          }
+          targetLabel = target.textContent || '';
+          target.style.outline = '3px solid #16a34a';
+          if (target.scrollIntoView) target.scrollIntoView({ block: 'center' });
+          await new Promise((r) => setTimeout(r, 350));
+          for (const jenis of ['pointerdown', 'mousedown', 'mouseup', 'click']) {
+            target.dispatchEvent(new MouseEvent(jenis, { bubbles: true, cancelable: true, view: window }));
+          }
+          target.click();
+          tertahan = await tunggu(() => {
+            area = ambilArea() || area;
+            const teks = String(area && (area.value || area.placeholder) || '');
+            const dialogMasihTerbuka = !![...document.querySelectorAll('[role="dialog"][data-expanded]')].find(terlihat);
+            return new RegExp('\\b' + baruKode + '\\b').test(teks) && !dialogMasihTerbuka ? area : null;
+          }, 2500);
+        }
+        const catatan = tertahan
+          ? (await new Promise((r) => setTimeout(r, Number(a.catatan && a.catatan.delayMs) || 1500)), await bukaCatatan(area, 'kbli', masterRoot))
+          : null;
+        masterRoot.style.outline = '';
+        return {
+          utama,
+          ketemu: true,
+          ambigu: 0,
+          sekarang: kodeLama,
+          lama: lamaKode,
+          baru: baruKode,
+          diubah: !!tertahan,
+          sama: false,
+          baruLabel: String(area.value || targetLabel || '').trim(),
+          pilihanMaster: true,
+          catatan,
+          alasan: tertahan ? '' : 'nilai Master KBLI tidak tertahan setelah dipilih',
+        };
+      };
+      const radios = [...root.querySelectorAll('input[type="radio"]')];
+      const masterRoot = [...document.querySelectorAll('[id^="kbli#"]')].find(terlihat);
+      if (!radios.length) {
+        if (!masterRoot) return { utama, ketemu: false, pesan: 'pilihan radio KBLI dan field Master KBLI tidak ditemukan' };
+        const lamaKode = normKode(a.lama);
+        const baruKode = normKode(a.baru);
+        if (!lamaKode || !baruKode) return { utama, ketemu: true, alasan: 'kode KBLI lama atau baru Excel tidak valid' };
+        return pilihMaster(masterRoot, lamaKode, baruKode, prosesCatatan);
+      }
+      const terpilih = radios.find((r) => r.checked || r.closest('[data-checked]')) || null;
+      const sorot = (input) => {
+        if (!input) return;
+        const id = input.getAttribute('aria-labelledby');
+        const label = id ? document.getElementById(id) : null;
+        const visual = label || input.parentElement;
+        if (visual) {
+          visual.style.outline = '3px solid #16a34a';
+          visual.style.outlineOffset = '3px';
+          if (visual.scrollIntoView) visual.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }
+      };
+      sorot(terpilih);
+      const sekarang = terpilih ? kodeRadio(terpilih) : '';
+      if (masterRoot && terpilih && (/master kbli/i.test(labelRadio(terpilih)) || sekarang === '999999')) {
+        const lamaKode = normKode(a.lama);
+        const baruKode = normKode(a.baru);
+        if (!lamaKode || !baruKode) return { utama, ketemu: true, alasan: 'kode KBLI lama atau baru Excel tidak valid' };
+        return pilihMaster(masterRoot, lamaKode, baruKode, prosesCatatan);
+      }
+      const hasil = {
+        utama,
+        ketemu: true,
+        ambigu: 0,
+        sekarang,
+        sekarangLabel: labelRadio(terpilih),
+        pilihan: radios.map((r) => ({ kode: kodeRadio(r), value: normKode(r.value), label: labelRadio(r) })),
+        diubah: false,
+        sama: false,
+      };
+      const lama = normKode(a.lama);
+      const baru = normKode(a.baru);
+      if (!lama || !baru) {
+        hasil.alasan = !lama ? 'kode KBLI lama Excel tidak valid' : 'kode KBLI baru Excel tidak valid';
+        return hasil;
+      }
+      hasil.lama = lama;
+      hasil.baru = baru;
+      if (sekarang !== lama) {
+        hasil.alasan = `KBLI halaman ${sekarang || '(kosong)'} berbeda dari KBLI lama Excel ${lama}`;
+        return hasil;
+      }
+      if (sekarang === baru) {
+        hasil.sama = true;
+        hasil.baruLabel = terpilih ? labelRadio(terpilih) : '';
+        hasil.disorot = true;
+        await new Promise((r) => setTimeout(r, Number(a.catatan && a.catatan.delayMs) || 1500));
+        hasil.catatan = await prosesCatatan(terpilih);
+        return hasil;
+      }
+      const target = radios.find((r) => kodeRadio(r) === baru || normKode(r.value) === baru);
+      if (!target) {
+        hasil.alasan = `kode KBLI baru ${baru} tidak ada di pilihan halaman`;
+        return hasil;
+      }
+      if (target.disabled) {
+        hasil.alasan = 'pilihan KBLI baru terkunci';
+        return hasil;
+      }
+      target.click();
+      await new Promise((r) => setTimeout(r, 400));
+      const sesudah = radios.find((r) => r.checked || r.closest('[data-checked]'));
+      sorot(sesudah || target);
+      hasil.diubah = !!sesudah && kodeRadio(sesudah) === baru;
+      hasil.sesudah = sesudah ? kodeRadio(sesudah) : '';
+      hasil.baruLabel = labelRadio(target);
+      hasil.disorot = true;
+      if (!hasil.diubah) hasil.alasan = 'pilihan KBLI tidak tertahan setelah dipilih';
+      if (hasil.diubah) {
+        await new Promise((r) => setTimeout(r, Number(a.catatan && a.catatan.delayMs) || 1500));
+        hasil.catatan = await prosesCatatan(sesudah || target);
+      }
+      return hasil;
+    },
+
     async catatanField(a) {
       // a.varId, a.teks, a.simpan
       if (!a || !a.varId) return { ok: false, pesan: 'varId tidak diberikan' };
@@ -961,6 +1252,20 @@
     await tutupDialog(dialog);
 
     return { ok: tertahan, tertahan, teks, dikirim: false, baru: true, terakhir };
+  }
+
+  async function bacaRiwayatField(el, varId, wadahField) {
+    const root = wadahField && terlihat(wadahField) ? wadahField : el.closest('[id^="' + varId + '#"]') || el.parentElement;
+    const tombol = [...(root ? root.querySelectorAll('button[title="Catatan"]') : [])].filter(terlihat);
+    if (!tombol.length) return { ok: false, pesan: 'tombol Catatan tidak ditemukan' };
+    tombol[0].click();
+    const dialog = await tunggu(() => [...document.querySelectorAll('[role="dialog"][data-expanded]')].filter(terlihat).pop() || null, 4000);
+    if (!dialog) return { ok: false, pesan: 'dialog Catatan tidak muncul' };
+    await tunggu(() => bacaRiwayat(dialog).length, 1200);
+    const riwayat = bacaRiwayat(dialog);
+    const terakhir = riwayat.length ? riwayat[riwayat.length - 1] : null;
+    await tutupDialog(dialog);
+    return { ok: true, riwayat, terakhir, adaCatatan: riwayat.length > 0 };
   }
 
   async function tutupDialog(dialog) {

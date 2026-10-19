@@ -200,6 +200,37 @@ const BLOKS = {
     },
   },
 
+  // Validasi dan pembaruan KBLI berbasis kode. Nilai Excel lama wajib sama
+  // dengan radio yang sedang terpilih; jika tidak sama, baris ditandai manual.
+  'blok2-kbli': {
+    judul: 'Validasi & Update KBLI Usaha (Blok II)',
+    sidebar: {
+      blok: 'SE2026 - L BLOK II',
+      grup: 'Keterangan Usaha/Perusahaan',
+      item: { kolomExcel: 'nama_usaha', cocok: 'longgar', wajibTepat: 1 },
+    },
+    identitas: { varId: 'nama_komersial', label: 'Nama komersial' },
+    fields: {
+      'Kode KBLI': {
+        varId: 'kbli_genai',
+        label: 'Kode KBLI',
+        tipe: 'pilihan_kode',
+        kolomLama: ['kbli_lama', 'kode_kbli_lama', 'kbli_awal'],
+        // KBLI baru dan KBLI final adalah nilai yang sama.
+        kolomBaru: ['kbli_final', 'kbli_baru', 'kode_kbli_final', 'kode_kbli_baru', 'kbli_usul'],
+        kolomCatatan: ['catatan_kbli', 'catatan'],
+      },
+    },
+    kbli: {
+      linkLangsung: true,
+      catatanWajib: true,
+      catatanDelayMs: 1500,
+      // Mengikuti alur Update Usaha per Flag: catatan dan pembaruan dikirim.
+      simpanCatatan: true,
+      kirimPembaruan: true,
+    },
+  },
+
   'blok1-keluarga': {
     judul: 'L BLOK I — Keterangan Anggota Keluarga',
     sidebar: {
@@ -241,6 +272,12 @@ const BLOKS = {
     validasi: {
       nik: { varId: 'nik', kolom: ['nik_usul', 'NIK usul'], label: 'NIK', cocok: 'ketat' },
       nama: { varId: 'nama_kk', kolom: ['nama_nik', 'nama NIK'], label: 'Nama', cocok: 'longgar' },
+      catatanAkhir: { kolom: ['catatan akhir', 'catatan_akhir', 'catatan'], label: 'Catatan akhir', cocok: 'ketat' },
+    },
+    // Mode validasi dapat memakai assignment_link langsung ke halaman detail
+    // (true), atau link daftar yang harus dibuka lewat tombol Review (false).
+    validasiKK: {
+      linkLangsung: true,
     },
     // Kolom Excel untuk info (hanya dicatat di log):
     info: {
@@ -307,9 +344,19 @@ const MODES = {
     aksi: 'isi',
     blok: 'blok2-usaha-flag',
   },
+  'kbli-validasi-update': {
+    judul: 'Validasi & Update KBLI Usaha — Blok II',
+    aksi: 'kbli',
+    blok: 'blok2-kbli',
+  },
   'kk-update': {
     judul: 'Update & Validasi KK — Blok P',
     aksi: 'kk',
+    blok: 'blokP-kk',
+  },
+  'kk-validasi': {
+    judul: 'Validasi KK (Blok P) — tanpa Edit',
+    aksi: 'kk-validasi',
     blok: 'blokP-kk',
   },
 };

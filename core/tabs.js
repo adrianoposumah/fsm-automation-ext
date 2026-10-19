@@ -23,7 +23,8 @@ async function tungguUrl(cek, ms) {
   while (Date.now() < akhir) {
     const tab = await chrome.tabs.get(workTabId);
     try {
-      if (cek(new URL(tab.url).pathname)) return true;
+      const url = new URL(tab.url || tab.pendingUrl || 'about:blank');
+      if (cek(url.pathname, url.href)) return true;
     } catch (e) {
       /* abaikan */
     }
