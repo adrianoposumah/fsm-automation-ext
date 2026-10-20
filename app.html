@@ -345,6 +345,12 @@
           <input type="number" id="batas" value="3" min="1" style="width: 80px" />
           <label><input type="checkbox" id="debug" /> Debug judul usaha</label>
         </div>
+        <div class="row">
+          <label for="pakaiUpdateFlag"><input type="checkbox" id="pakaiUpdateFlag" /> Lewati baris berdasarkan update_flag</label>
+          <label for="kolomUpdateFlag" class="label" style="min-width:auto">Kolom update_flag</label>
+          <select id="kolomUpdateFlag" style="min-width:200px" disabled><option value="">(muat Excel dulu)</option></select>
+          <small class="hint" style="margin-top:0">Aktif: 0 = lewati, 1 = proses</small>
+        </div>
         <div class="row" style="display: block">
           <div style="font-weight: 500; color: var(--fg-muted); margin-bottom: var(--sp-2)">Field yang dicek/diisi &larr; kolom Excel</div>
           <span id="kolomUpdate"><small class="hint">(pilih file Excel dulu)</small></span>
@@ -367,6 +373,11 @@
           <label for="mulaiBaris" class="label">Mulai dari baris Excel</label>
           <input type="number" id="mulaiBaris" value="2" min="2" step="1" style="width: 90px" />
           <span class="hint" style="margin-top: 0">Baris 1 dianggap sebagai header.</span>
+        </div>
+        <div id="panelProgres" class="row" aria-live="polite" style="display:flex; gap:16px; flex-wrap:wrap; padding:12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--bg-card)">
+          <span><strong>Baris diproses:</strong> <span id="progresBaris">—</span></span>
+          <span><strong>Berhasil:</strong> <span id="progresBerhasil">0</span></span>
+          <span><strong>Gagal:</strong> <span id="progresGagal">0</span></span>
         </div>
         <div id="previewMulai" aria-live="polite">Muat file Excel untuk melihat preview baris.</div>
         <small class="hint"> Mode simulasi — tidak menyimpan. Pintasan: <kbd>Ctrl</kbd>+<kbd>Enter</kbd> Mulai, <kbd>Esc</kbd> Stop. </small>

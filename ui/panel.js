@@ -6,6 +6,15 @@ function setBusy(b) {
   $('btnStop').disabled = !b;
 }
 
+function perbaruiPanelProgres(baris = '—', berhasil = 0, gagal = 0) {
+  const elBaris = $('progresBaris');
+  const elBerhasil = $('progresBerhasil');
+  const elGagal = $('progresGagal');
+  if (elBaris) elBaris.textContent = baris;
+  if (elBerhasil) elBerhasil.textContent = String(berhasil);
+  if (elGagal) elGagal.textContent = String(gagal);
+}
+
 function setChipSesi(status) {
   const chip = $('chipSesi');
   if (!chip) return;
@@ -147,6 +156,12 @@ function pasangPanel() {
       if (!kolom.length) return log('Excel terbaca tetapi tidak ada baris judul kolom/data. Pastikan sheet berisi tabel.');
       log(`Excel dimuat dari sheet '${b.sheet}': ${rows.length} baris. Kolom: ${kolom.join(', ')}`);
 
+      const pilihFlag = $('kolomUpdateFlag');
+      pilihFlag.innerHTML = `<option value="">(pilih kolom)</option>` + kolom.map((k) => `<option value="${esc(k)}">${esc(k)}</option>`).join('');
+      pilihFlag.disabled = !kolom.length || !$('pakaiUpdateFlag').checked;
+      const tebakFlag = kolom.find((k) => k.trim().toLowerCase() === 'update_flag');
+      if (tebakFlag) pilihFlag.value = tebakFlag;
+
       $('kolomLink').innerHTML = kolom.map((k) => `<option value="${esc(k)}">${esc(k)}</option>`).join('');
       $('kolomUsaha').innerHTML = $('kolomLink').innerHTML;
 
@@ -193,6 +208,9 @@ function pasangPanel() {
     .join('');
   $('mode').value = 'review';
   $('mode').onchange = renderKolomUpdate;
+  $('pakaiUpdateFlag').addEventListener('change', (e) => {
+    $('kolomUpdateFlag').disabled = !e.target.checked || !kolom.length;
+  });
   $('mulaiBaris').addEventListener('input', renderPreviewMulai);
   $('batas').addEventListener('input', renderPreviewMulai);
   $('kolomLink').addEventListener('change', renderPreviewMulai);

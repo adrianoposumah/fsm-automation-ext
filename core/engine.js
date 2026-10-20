@@ -577,7 +577,12 @@ async function alurKBLI(baris, link, petaKBLI, limiter) {
   })).find((x) => x && x.utama);
   if (!r || !r.ketemu) return { status: 'PERLU CEK MANUAL: field KBLI tidak ditemukan', detail: r && r.pesan };
   if (r.ambigu) return { status: 'PERLU CEK MANUAL: field KBLI ambigu', detail: r.pesan };
-  if (r.alasan && !r.sama && !r.diubah) return { status: 'PERLU CEK MANUAL: ' + r.alasan, detail: `${lama} → ${baru}` };
+  if (r.alasan && !r.sama && !r.diubah)
+    return {
+      status: 'PERLU CEK MANUAL: ' + r.alasan,
+      detail: `${lama} → ${baru}`,
+      hentikanProses: !!r.hentikanProses,
+    };
 
   // Dialog Catatan sudah dibuka dari operasi KBLI setelah scroll/pemilihan.
   const catatan = r.catatan;
@@ -946,6 +951,9 @@ async function mulai() {
   if (mode.blok && !blok) return log(`Blok "${mode.blok}" tidak ada di config.`);
 
   const kolomLink = $('kolomLink').value;
+  const pakaiUpdateFlag = $('pakaiUpdateFlag').checked;
+  const kolomUpdateFlag = $('kolomUpdateFlag').value;
+  if (pakaiUpdateFlag && !kolomUpdateFlag) return log('Aktifkan update_flag: pilih kolom update_flag terlebih dahulu.');
   const kolomUsaha = $('kolomUsaha').value;
   const longgar = $('kecocokan').value === 'longgar';
   const pilih = [...document.querySelectorAll('#kolomUpdate input:checked')].map((c) => c.value);
@@ -1018,7 +1026,11 @@ async function mulai() {
   const linkTerlihat = new Map(); // [BARU] link → nomor baris Excel terakhir yang memprosesnya
 
   setBusy(true);
+  let jumlahBerhasil = 0;
+  let jumlahGagal = 0;
+  perbaruiPanelProgres('Menyiapkan…', 0, 0);
   log(`Mulai: ${target.length} baris dari Excel baris ${mulaiBaris}, mode ${modeId}, profil ${$('profil').value}.`);
+  if (pakaiUpdateFlag) log(`Filter update_flag aktif dari kolom '${kolomUpdateFlag}' (0 = lewati, 1 = proses).`);
   try {
     await buka(`https://${CONFIG.HOST}${CONFIG.START_PATH}`, limiter).catch((e) => {
       if (!(e instanceof SesiHabis)) throw e;
@@ -1032,10 +1044,18 @@ async function mulai() {
       }
       const baris = target[i];
       const barisExcel = mulaiIndex + i + 2;
+      perbaruiPanelProgres(`${barisExcel} (${i + 1}/${target.length})`, jumlahBerhasil, jumlahGagal);
       const link = String(baris[kolomLink] || '').trim();
       let r;
       try {
-        if (!/^https:\/\//.test(link) || new URL(link).host !== CONFIG.HOST) {
+        if (pakaiUpdateFlag) {
+          const nilaiFlag = String(baris[kolomUpdateFlag] ?? '').trim().replace(/\.0+$/, '');
+          if (nilaiFlag === '0') r = { status: 'DILEWATI: update_flag = 0' };
+          else if (nilaiFlag !== '1') r = { status: `PERLU CEK MANUAL: update_flag harus 0 atau 1 (nilai: ${nilaiFlag || 'kosong'})` };
+        }
+        if (r) {
+          // Baris sudah ditangani oleh filter update_flag.
+        } else if (!/^https:\/\//.test(link) || new URL(link).host !== CONFIG.HOST) {
           r = { status: 'DILEWATI: link kosong atau host tidak cocok' };
           // [BARU] cabang konflik
         } else if ((aksi === 'kk' || aksi === 'kk-validasi') && linkKonflik.has(link)) {
@@ -1104,6 +1124,11 @@ async function mulai() {
         waktu: new Date().toLocaleString('id-ID'),
       });
 
+      const statusBaris = String(r.status || '');
+      if (/^(GAGAL|CEK GAGAL|PERLU CEK MANUAL|DIBATASI)/i.test(statusBaris)) jumlahGagal++;
+      else if (!/^DILEWATI:/i.test(statusBaris)) jumlahBerhasil++;
+      perbaruiPanelProgres(`${barisExcel} (${i + 1}/${target.length})`, jumlahBerhasil, jumlahGagal);
+
       const tagUsaha = namaUsaha ? `[${namaUsaha}] ` : '';
       log(`[${i + 1}/${target.length}] ${tagUsaha}${r.status}${r.detail ? ' — ' + r.detail : ''}`);
       if (r.identitas) log(`   ↳ ${r.identitas}`);
@@ -1113,6 +1138,11 @@ async function mulai() {
       }
       if (r.kalk) {
         log(`   ⇢ pendapatan ${r.kalk.totalPendapatan} - pengeluaran ${r.kalk.totalPengeluaran} = ${r.kalk.selisih}${r.kalk.minus ? ' (MINUS)' : ''}`);
+      }
+      if (r.hentikanProses) {
+        log('Proses dihentikan pada baris ini agar baris berikutnya tidak terlewati saat pencarian KBLI belum selesai.');
+        stopFlag = true;
+        break;
       }
       if (r.akhir) {
         if (!r.akhir.ok) {
@@ -1144,7 +1174,8 @@ async function mulai() {
       // Jeda antar baris — DI LUAR if (r.akhir), jalan untuk semua jenis hasil.
       // Hormati stopFlag; jitter hanya MENAMBAH.
       const jedaDasar = Number(CONFIG.JEDA_ANTAR_BARIS_S) || 0;
-      if (jedaDasar > 0 && i < target.length - 1 && !stopFlag) {
+      const dilewati = String(r.status || '').startsWith('DILEWATI:');
+      if (!dilewati && jedaDasar > 0 && i < target.length - 1 && !stopFlag) {
         const jeda = jedaDasar + Math.random() * jedaDasar;
         log(`   ⋯ jeda ${jeda.toFixed(1)} detik sebelum baris berikutnya`);
         await tidur(jeda);
@@ -1154,6 +1185,7 @@ async function mulai() {
     log('Berhenti: ' + e.message);
   } finally {
     setBusy(false);
+    perbaruiPanelProgres('Selesai', jumlahBerhasil, jumlahGagal);
     log("Selesai. Gunakan 'Unduh log' untuk menyimpan hasil.");
   }
 }

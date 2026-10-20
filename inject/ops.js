@@ -884,14 +884,21 @@
       };
       const pilihMaster = async (masterRoot, lamaKode, baruKode, bukaCatatan) => {
         const ambilArea = () => [...document.querySelectorAll('[id^="kbli#"] textarea')].find(terlihat) || masterRoot.querySelector('textarea');
+        const kodeTerpilih = (el) => {
+          if (!el) return '';
+          // Pilihan tersimpan pada placeholder berformat [F][43211]....
+          // area.value adalah teks pencarian dan tidak membuktikan pilihan.
+          const terpilih = String(el.placeholder || '').match(/\[[A-Z]\]\[?(\d{5})\]?/i);
+          return terpilih ? terpilih[1] : '';
+        };
         let area = ambilArea();
         const tombolBuka = [...masterRoot.querySelectorAll('button[aria-haspopup="dialog"]')].find(terlihat);
         if (!area || !tombolBuka) return { utama, ketemu: false, pesan: 'kontrol Master KBLI tidak lengkap' };
         if (masterRoot.scrollIntoView) masterRoot.scrollIntoView({ block: 'center', behavior: 'smooth' });
         // Pada kondisi tertentu nilai terpilih disimpan di placeholder, bukan
-        // value textarea. Keduanya harus divalidasi sebelum mengetik pencarian.
-        const teksLama = String(area.value || area.placeholder || '').trim();
-        const kodeLama = (teksLama.match(/\b\d{5}\b/) || [])[0] || '';
+        // value textarea. Hanya placeholder berformat kode yang membuktikan pilihan.
+        const teksLama = String(area.placeholder || area.value || '').trim();
+        const kodeLama = kodeTerpilih(area);
         if (kodeLama && kodeLama === baruKode) {
           masterRoot.style.outline = '3px solid #16a34a';
           if (masterRoot.scrollIntoView) masterRoot.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -919,40 +926,62 @@
         Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(area, baruKode);
         area.dispatchEvent(new Event('input', { bubbles: true }));
         area.dispatchEvent(new Event('change', { bubbles: true }));
-        const cariOpsi = () => {
-          const dialog = [...document.querySelectorAll('[role="dialog"][data-expanded]')].filter(terlihat).pop();
-          if (!dialog || [...dialog.querySelectorAll('span')].some((s) => /memuat opsi/i.test(s.textContent || ''))) return [];
+        const idPopover = tombolBuka.getAttribute('aria-controls');
+        const popoverSel = idPopover ? `#${CSS.escape(idPopover)}` : '[role="dialog"][data-expanded]';
+        const statusHasil = () => {
+          const dialog = [...document.querySelectorAll(popoverSel)].filter(terlihat).pop();
+          if (!dialog) return { selesai: false, memuat: true, opsi: [] };
+          const memuat = [...dialog.querySelectorAll('span')].some((s) => /memuat opsi/i.test(s.textContent || ''));
           const semua = [...dialog.querySelectorAll('[role="listbox"] [role="option"]')].filter(terlihat);
-          const berdasarkanKey = semua.filter((x) => normKode(x.getAttribute('data-key')) === baruKode);
-          if (berdasarkanKey.length) return berdasarkanKey;
-          return semua.filter((x) => {
-            const key = normKode(x.getAttribute('data-key'));
+          const exact = semua.filter((x) => normKode(x.getAttribute('data-key')) === baruKode);
+          const cocok = exact.length ? exact : semua.filter((x) => {
             const teks = String(x.textContent || '').replace(/\s+/g, ' ');
-            return key === baruKode || new RegExp('\\b' + baruKode + '\\b').test(teks);
+            return new RegExp('\\b' + baruKode + '\\b').test(teks);
           });
+          return { selesai: !memuat, memuat, opsi: cocok, dialog };
+        };
+        const cariOpsi = () => {
+          const s = statusHasil();
+          return s.selesai ? s.opsi : [];
         };
         const opsi = await (async () => {
-          const batas = Date.now() + 10000;
+          const batas = Date.now() + 60000;
+          let kosongStabilSejak = 0;
           while (Date.now() < batas) {
-            const pertama = cariOpsi();
-            if (pertama.length >= 1) {
-              const tanda = `${pertama[0].getAttribute('data-key')}|${pertama[0].textContent}`;
-              await new Promise((r) => setTimeout(r, 450));
-              const kedua = cariOpsi();
-              if (kedua.length >= 1 && `${kedua[0].getAttribute('data-key')}|${kedua[0].textContent}` === tanda) return kedua;
+            const s = statusHasil();
+            if (!s.selesai || s.memuat) {
+              kosongStabilSejak = 0;
+              await new Promise((r) => setTimeout(r, 250));
+              continue;
             }
-            await new Promise((r) => setTimeout(r, 200));
+            if (!s.opsi.length) {
+              if (!kosongStabilSejak) kosongStabilSejak = Date.now();
+              // Tunggu rerender/debounce setelah spinner hilang sebelum
+              // menyimpulkan kode memang tidak ditemukan.
+              if (Date.now() - kosongStabilSejak >= 8000) return { status: 'kosong', opsi: [] };
+              await new Promise((r) => setTimeout(r, 250));
+              continue;
+            }
+            const pertama = cariOpsi();
+            const tanda = `${pertama[0].getAttribute('data-key')}|${pertama[0].textContent}`;
+            await new Promise((r) => setTimeout(r, 600));
+            const kedua = cariOpsi();
+            if (kedua.length && `${kedua[0].getAttribute('data-key')}|${kedua[0].textContent}` === tanda) return { status: 'ada', opsi: kedua };
           }
-          return [];
+          return { status: 'timeout', opsi: [] };
         })();
-        if (!opsi || !opsi.length) {
+        if (opsi.status === 'timeout') {
           masterRoot.style.outline = '';
-          return { utama, ketemu: true, sama: false, diubah: false, alasan: `opsi Master KBLI untuk ${baruKode} ditemukan ${opsi ? opsi.length : 0}` };
+          return { utama, ketemu: true, sama: false, diubah: false, hentikanProses: true, alasan: `hasil pencarian KBLI ${baruKode} masih memuat setelah 60 detik; proses dihentikan agar baris berikutnya tidak berjalan` };
+        }
+        if (opsi.status !== 'ada' || !opsi.opsi.length) {
+          masterRoot.style.outline = '';
+          return { utama, ketemu: true, sama: false, diubah: false, alasan: `opsi Master KBLI untuk ${baruKode} tidak ditemukan setelah hasil pencarian stabil` };
         }
         let tertahan = null;
         let targetLabel = '';
         for (let percobaan = 1; percobaan <= 3 && !tertahan; percobaan++) {
-          const target = cariOpsi()[0];
+          const target = cariOpsi().find((x) => normKode(x.getAttribute('data-key')) === baruKode) || cariOpsi()[0];
           if (!target) {
             await new Promise((r) => setTimeout(r, 300));
             continue;
@@ -961,15 +990,14 @@
           target.style.outline = '3px solid #16a34a';
           if (target.scrollIntoView) target.scrollIntoView({ block: 'center' });
           await new Promise((r) => setTimeout(r, 350));
-          for (const jenis of ['pointerdown', 'mousedown', 'mouseup', 'click']) {
-            target.dispatchEvent(new MouseEvent(jenis, { bubbles: true, cancelable: true, view: window }));
-          }
+          // Klik satu kali pada <li> terbaru; event sintetis berurutan dapat
+          // membuat komponen memilih lalu menutup/mengganti hasil sebelum click.
           target.click();
           tertahan = await tunggu(() => {
             area = ambilArea() || area;
-            const teks = String(area && (area.value || area.placeholder) || '');
+            const kodeAktif = kodeTerpilih(area);
             const dialogMasihTerbuka = !![...document.querySelectorAll('[role="dialog"][data-expanded]')].find(terlihat);
-            return new RegExp('\\b' + baruKode + '\\b').test(teks) && !dialogMasihTerbuka ? area : null;
+            return kodeAktif === baruKode && !dialogMasihTerbuka ? area : null;
           }, 2500);
         }
         const catatan = tertahan
@@ -1052,8 +1080,33 @@
       }
       const target = radios.find((r) => kodeRadio(r) === baru || normKode(r.value) === baru);
       if (!target) {
-        hasil.alasan = `kode KBLI baru ${baru} tidak ada di pilihan halaman`;
-        return hasil;
+        // Kode baru mungkin memang tidak tersedia sebagai radio pada
+        // kbli_genai. Dalam kondisi itu, alihkan ke opsi "Pilih dari Master
+        // KBLI", tunggu kontrol pencarian tampil, lalu cari kode yang sama.
+        const radioMaster = radios.find((r) => /pilih dari master\s*kbli|master\s*kbli/i.test(labelRadio(r)));
+        if (!radioMaster) {
+          hasil.alasan = `kode KBLI baru ${baru} tidak ada di pilihan halaman dan opsi Master KBLI tidak tersedia`;
+          return hasil;
+        }
+        radioMaster.click();
+        const masterSiap = await tunggu(() => {
+          const segar = [...document.querySelectorAll('[id^="kbli#"]')].find(terlihat);
+          return segar && segar.querySelector('textarea') && segar.querySelector('button[aria-haspopup="dialog"]')
+            ? segar
+            : null;
+        }, 8000);
+        if (!masterSiap) {
+          hasil.alasan = 'opsi Pilih dari Master KBLI dipilih tetapi kontrol pencarian tidak muncul';
+          return hasil;
+        }
+        const hasilMaster = await pilihMaster(masterSiap, lama, baru, prosesCatatan);
+        return {
+          ...hasil,
+          ...hasilMaster,
+          sekarang,
+          sekarangLabel: labelRadio(terpilih),
+          pilihanMaster: true,
+        };
       }
       if (target.disabled) {
         hasil.alasan = 'pilihan KBLI baru terkunci';
