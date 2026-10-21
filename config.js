@@ -47,14 +47,32 @@ const CONFIG = {
   // mempercepat alur, tetapi tetap memberi waktu komponen form memproses event.
   JEDA_FIELD_MS: 150,
 
+  // Timeout pencarian field. Field opsional memakai timeout khusus di bawah.
+  TUNGGU_FIELD_MS: 5000,
+
   // Jeda setelah textarea catatan diisi sebelum tombol Simpan ditekan.
   JEDA_CATATAN_MS: 150,
 
   // Timeout khusus alur catatan dan field opsional.
-  TUNGGU_FIELD_OPSIONAL_MS: 2500,
+  TUNGGU_FIELD_OPSIONAL_MS: 1500,
   TUNGGU_DIALOG_CATATAN_MS: 2000,
   TUNGGU_TEXTAREA_CATATAN_MS: 1400,
   TUNGGU_TUTUP_DIALOG_MS: 1000,
+  // Maksimum menunggu tanda sukses setelah konfirmasi akhir pengiriman.
+  TUNGGU_DIALOG_BERHASIL_MS: 30000,
+  // Jika header Blok II belum terdeteksi di sidebar, periksa ulang sekali.
+  CEK_ULANG_BLOK_SIDEBAR: {
+    aktif: true,
+    blok: 'SE2026 - L BLOK II',
+    maksimal: 2, // total 3 pemeriksaan: 1 awal + 2 ulang
+    jedaMs: 15000,
+  },
+  // Total 3 pencarian tombol Edit: 1 awal + 2 ulang sebelum lanjut ke Revoke/manual.
+  CEK_ULANG_TOMBOL_EDIT: {
+    aktif: true,
+    maksimal: 2,
+    jedaMs: 15000,
+  },
 
   // Kalkulasi total & skip jika minus.
   //   pengeluaran = gaji + biaya_produksi + biaya_pembelian + operasional + non_operasional
@@ -273,6 +291,72 @@ const BLOKS = {
     },
   },
 
+  // Update berdasarkan kolom catatan/remark Excel. Nilai #1 berarti nilai boleh
+  // diisi, sedangkan #0 hanya divalidasi harus sama lalu diberi catatan #0.
+  // Mode ini sengaja dry-run: catatan dan perubahan tidak dikirim ke server.
+  'blok2-usaha-flag-catatan-otomatis': {
+    judul: 'Update Usaha per Catatan/Remark #1/#0 (Blok II, tanpa simpan)',
+    sidebar: {
+      blok: 'SE2026 - L BLOK II',
+      grup: 'Keterangan Usaha/Perusahaan',
+      item: { kolomExcel: 'nama_usaha', cocok: 'longgar', wajibTepat: 1 },
+    },
+    identitas: { varId: 'nama_komersial', label: 'Nama komersial' },
+    fields: {
+      'Biaya Produksi': {
+        varId: 'biaya_produksi',
+        tipe: 'angka',
+        kolom: ['biaya_produksi'],
+        remarkKolom: ['biaya_produksi_remark'],
+      },
+      'Biaya Pembelian': {
+        varId: 'biaya_pembelian',
+        tipe: 'angka',
+        opsional: true,
+        kolom: ['biaya_pembelian'],
+        remarkKolom: ['biaya_pembelian_remark'],
+      },
+      Operasional: {
+        varId: 'operasional',
+        tipe: 'angka',
+        kolom: ['operasional', 'biaya_operasional'],
+        remarkKolom: ['biaya_operasional_remark', 'operasional_remark'],
+      },
+      'Non Operasional': {
+        varId: 'non_operasional',
+        tipe: 'angka',
+        kolom: ['non_operasional', 'biaya_non_operasional'],
+        remarkKolom: ['biaya_non_operasional_remark', 'non_operasional_remark'],
+      },
+      'Nilai Pendapatan': {
+        varId: 'nilai_pendapatan',
+        tipe: 'angka',
+        kolom: ['nilai_pendapatan', 'pendapatan_barang_jasa'],
+        remarkKolom: ['pendapatan_barang_jasa_remark', 'nilai_pendapatan_remark'],
+      },
+      'Pendapatan Lain': {
+        varId: 'pendapatan_lain',
+        tipe: 'angka',
+        kolom: ['pendapatan_lain', 'pendapatan_lainnya'],
+        remarkKolom: ['pendapatan_lainnya_remark', 'pendapatan_lain_remark'],
+      },
+    },
+    flag: {
+      nilaiAktif: ['1'],
+      remarkPerField: true,
+      prosesFlag0: true,
+      catatanPerField: true,
+      catatanTetapPerFlag: true,
+      catatanTeksPerNilai: { 0: '#0', 1: '#1' },
+      catatanWajib: false,
+      catatanJikaSama: true,
+      simpanCatatan: true,
+      kirimPembaruan: true,
+      langkahAkhir: true,
+      linkLangsung: true,
+    },
+  },
+
   // Validasi dan pembaruan KBLI berbasis kode. Nilai Excel lama wajib sama
   // dengan radio yang sedang terpilih; jika tidak sama, baris ditandai manual.
   'blok2-kbli': {
@@ -421,6 +505,11 @@ const MODES = {
     judul: 'Isi usaha + catatan per field — Blok II (tanpa simpan)',
     aksi: 'isi',
     blok: 'blok2-usaha-flag-catatan-field',
+  },
+  'update-usaha-per-flag-catatan': {
+    judul: 'Update Usaha per Catatan/Remark #1/#0 (tanpa simpan)',
+    aksi: 'isi',
+    blok: 'blok2-usaha-flag-catatan-otomatis',
   },
   'kbli-validasi-update': {
     judul: 'Validasi & Update KBLI Usaha — Blok II',

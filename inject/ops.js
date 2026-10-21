@@ -47,6 +47,17 @@
     );
   };
 
+  const cariDialogBerhasilSubmit = () => {
+    const ds = [...document.querySelectorAll('[role="alertdialog"], [role="dialog"]')].filter(terlihat);
+    return ds.find((d) => {
+      const teks = norm(d.textContent);
+      return /assignment/.test(teks) && /berhasil/.test(teks) && /(disubmit|dikirim|terkirim)/.test(teks);
+    }) || null;
+  };
+
+  const cariTombolTetapDiHalaman = (dialog) =>
+    [...dialog.querySelectorAll('button')].find((b) => /tetap di halaman/i.test(norm(b.textContent))) || null;
+
   const bacaRingkasanDialog = (dialog) => {
     const kartu = [];
     for (const b of dialog.querySelectorAll('button[type="button"]')) {
@@ -789,8 +800,39 @@
         }
 
         btnKonfirmasiFinal.click();
-        await tunggu(() => !cariDialogKonfirmasiKirim() && !cariDialogKirim(), 5000);
-        await new Promise((r) => setTimeout(r, 800));
+        // Dialog sukses bisa muncul setelah dialog konfirmasi tertutup. Tunggu
+        // tanda sukses itu sendiri agar loop tidak pindah baris terlalu cepat.
+        const dialogBerhasil = await tunggu(cariDialogBerhasilSubmit, Number(a.tungguBerhasilMs) || 15000);
+        if (!dialogBerhasil) {
+          return {
+            ok: false,
+            sebelum: statusSebelum,
+            sesudah: statusSesudah,
+            diubah,
+            dikirim: false,
+            dari: tombol.dari,
+            dialog: { ...ringkasan, konfirmasiKedua: true, dikonfirmasi: false, dibatalkan: false },
+            pesan: 'dialog sukses pengiriman tidak terdeteksi setelah konfirmasi akhir; status kirim belum dapat dipastikan',
+          };
+        }
+
+        const tombolTetap = cariTombolTetapDiHalaman(dialogBerhasil);
+        if (tombolTetap) {
+          tombolTetap.click();
+          const tertutup = await tunggu(() => !dialogBerhasil.isConnected || !terlihat(dialogBerhasil), 5000);
+          if (!tertutup) {
+            return {
+              ok: true,
+              sebelum: statusSebelum,
+              sesudah: statusSesudah,
+              diubah,
+              dikirim: true,
+              dari: tombol.dari,
+              dialog: { ...ringkasan, konfirmasiKedua: true, dikonfirmasi: true, dibatalkan: false, suksesTerdeteksi: true },
+              pesan: 'dialog sukses terdeteksi tetapi tetap terbuka setelah memilih Tetap di Halaman; proses dilanjutkan',
+            };
+          }
+        }
         return {
           ok: true,
           sebelum: statusSebelum,
@@ -798,7 +840,7 @@
           diubah,
           dikirim: true,
           dari: tombol.dari,
-          dialog: { ...ringkasan, konfirmasiKedua: true, dikonfirmasi: true, dibatalkan: false },
+          dialog: { ...ringkasan, konfirmasiKedua: true, dikonfirmasi: true, dibatalkan: false, suksesTerdeteksi: true },
         };
       } else if (btnBatal) {
         btnBatal.click();
@@ -1369,6 +1411,7 @@
         tag: el.tagName.toLowerCase(),
         type: el.type || '',
         name: el.name || '',
+        nilai: String(el.value == null ? '' : el.value),
         terkunci: !!(el.readOnly || el.disabled),
         wadah,
       };
@@ -1383,7 +1426,10 @@
       // [BARU] bentuk ternormalisasi untuk log perubahan (null bila tidak bisa dinormalkan / bukan field angka)
       out[k].lamaAngka = modeAngka ? angka(el.value) : null;
       out[k].baruAngka = modeAngka ? baru : null;
-      if (mentah === undefined || mentah === null || String(mentah).trim() === '') {
+      if (a.hanyaCatatan) {
+        // Flag 0 hanya meninggalkan catatan; nilai form tidak boleh disentuh.
+        out[k].sama = modeAngka ? angka(el.value) === baru : String(el.value) === baru;
+      } else if (mentah === undefined || mentah === null || String(mentah).trim() === '') {
         out[k].diisi = false;
         out[k].alasan = 'sel kosong';
       } else if (baru === null) {
