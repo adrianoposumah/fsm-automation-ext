@@ -1303,10 +1303,12 @@
       };
     }
 
-    // [BARU] Cek apakah teks catatan yang sama sudah ada di riwayat dialog
+    // Hindari duplikasi hanya jika catatan TERAKHIR sudah sama. Catatan lama
+    // yang pernah muncul sebelumnya tidak boleh mencegah perubahan remark
+    // (mis. riwayat #0, lalu #1, dan Excel kembali meminta #0).
     const teksNorm = norm(teks);
-    const adaDiRiwayat = riwayat.some((r) => norm(r.teks) === teksNorm);
-    if (adaDiRiwayat) {
+    const terakhirSama = !!(terakhir && norm(terakhir.teks) === teksNorm);
+    if (terakhirSama) {
       await tutupDialog(dialog, Number(opsi && opsi.dialogTutupMs) || 2000);
       return {
         ok: true,
