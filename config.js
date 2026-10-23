@@ -48,7 +48,7 @@ const CONFIG = {
   JEDA_FIELD_MS: 150,
 
   // Timeout pencarian field. Field opsional memakai timeout khusus di bawah.
-  TUNGGU_FIELD_MS: 5000,
+  TUNGGU_FIELD_MS: 2500,
 
   // Jeda setelah textarea catatan diisi sebelum tombol Simpan ditekan.
   JEDA_CATATAN_MS: 150,
@@ -341,6 +341,7 @@ const BLOKS = {
         remarkKolom: ['pendapatan_lainnya_remark', 'pendapatan_lain_remark'],
       },
     },
+    fieldFallbackSuffix: '_bln',
     flag: {
       nilaiAktif: ['1'],
       remarkPerField: true,

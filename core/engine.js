@@ -415,29 +415,31 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
   // --- Cek & isi field ---
   // Satu field per panggilan supaya hasilnya dapat ditampilkan ke log
   // segera setelah field selesai, bukan menunggu seluruh baris selesai.
-  const logField = (fase, k, v) => {
+  const logField = (fase, k, v, fieldSpec = fields[k]) => {
     const awalan = opsi.barisExcel ? `[baris ${opsi.barisExcel}] ` : '';
-    if (!v || !v.ketemu) return log(`${awalan}${fase} ${k}: TIDAK DITEMUKAN`);
-    if (v.tersembunyi) return log(`${awalan}${fase} ${k}: ADA TAPI TIDAK TAMPIL`);
-    if (v.ambigu) return log(`${awalan}${fase} ${k}: AMBIGU (${v.ambigu} kandidat)`);
-    if (fase === 'cek') return log(`${awalan}cek ${k}: ditemukan${v.terkunci ? ' [terkunci]' : ''}`);
-    if (v.diisi) return log(`${awalan}isi ${k}: "${v.lama ?? ''}" → "${v.baruAngka ?? nilai[k] ?? ''}"`);
-    if (v.sama) return log(`${awalan}isi ${k}: sudah sama ("${v.lama ?? ''}")`);
-    return log(`${awalan}isi ${k}: GAGAL${v.alasan ? ` — ${v.alasan}` : ''}`);
+    const idField = fieldSpec && fieldSpec.varId;
+    const penanda = idField && idField.endsWith('_bln') ? ` [ID ${idField}]` : '';
+    if (!v || !v.ketemu) return log(`${awalan}${fase} ${k}${penanda}: TIDAK DITEMUKAN`);
+    if (v.tersembunyi) return log(`${awalan}${fase} ${k}${penanda}: ADA TAPI TIDAK TAMPIL`);
+    if (v.ambigu) return log(`${awalan}${fase} ${k}${penanda}: AMBIGU (${v.ambigu} kandidat)`);
+    if (fase === 'cek') return log(`${awalan}cek ${k}${penanda}: ditemukan${v.terkunci ? ' [terkunci]' : ''}`);
+    if (v.diisi) return log(`${awalan}isi ${k}${penanda}: "${v.lama ?? ''}" → "${v.baruAngka ?? nilai[k] ?? ''}"`);
+    if (v.sama) return log(`${awalan}isi ${k}${penanda}: sudah sama ("${v.lama ?? ''}")`);
+    return log(`${awalan}isi ${k}${penanda}: GAGAL${v.alasan ? ` — ${v.alasan}` : ''}`);
   };
 
-  const jalankanSatu = async (op, k, argTambahan) => {
+  const jalankanSatu = async (op, k, argTambahan, fieldSpec = fields[k]) => {
     const hasilField = gabung(
       await jalankanDiTab(op, {
         ...argTambahan,
-        fields: { [k]: fields[k] },
+        fields: { [k]: fieldSpec },
         jedaMs: CONFIG.JEDA_FIELD_MS,
-        tungguFieldMs: fields[k] && fields[k].opsional ? CONFIG.TUNGGU_FIELD_OPSIONAL_MS : CONFIG.TUNGGU_FIELD_MS,
+        tungguFieldMs: fieldSpec && fieldSpec.opsional ? CONFIG.TUNGGU_FIELD_OPSIONAL_MS : CONFIG.TUNGGU_FIELD_MS,
         ...(argTambahan.nilai ? { nilai: { [k]: nilai[k] } } : {}),
       }),
     );
     const hasil = hasilField[k];
-    logField(op === 'cek' ? 'cek' : 'isi', k, hasil);
+    logField(op === 'cek' ? 'cek' : 'isi', k, hasil, fieldSpec);
     return hasil;
   };
 
@@ -466,6 +468,25 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
   for (const k of pilih) {
     const hasilCek = await jalankanSatu('cek', k, {});
     g[k] = hasilCek;
+  }
+
+  // Bila seluruh field utama sudah diperiksa, coba ID alternatif berakhiran
+  // `_bln` hanya untuk field yang memang tidak ditemukan. Nilai Excel dan
+  // catatan tetap memakai pemetaan field yang sama.
+  const suffixFallback = blok.fieldFallbackSuffix;
+  if (suffixFallback) {
+    for (const k of pilih) {
+      if (!g[k] || g[k].ketemu) continue;
+      const utama = fields[k];
+      if (!utama || !utama.varId || utama.varId.endsWith(suffixFallback)) continue;
+      const alternatif = { ...utama, varId: utama.varId + suffixFallback };
+      log(`${opsi.barisExcel ? `[baris ${opsi.barisExcel}] ` : ''}${k}: field utama ${utama.varId} tidak ditemukan; mencari ${alternatif.varId}`);
+      const hasilFallback = await jalankanSatu('cek', k, {}, alternatif);
+      if (hasilFallback && hasilFallback.ketemu) {
+        fields[k] = alternatif;
+        g[k] = hasilFallback;
+      }
+    }
   }
 
   // Field opsional yang memang tidak ada pada jenis usaha ini dikeluarkan dari
