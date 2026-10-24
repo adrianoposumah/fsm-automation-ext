@@ -342,6 +342,9 @@ const BLOKS = {
       },
     },
     fieldFallbackSuffix: '_bln',
+    // Kolom Excel pada field fallback berisi akumulasi tahunan; konversi ke
+    // bulanan sebelum isi/validasi. Toleransi kedekatan dalam satuan rupiah.
+    fieldFallbackBulanan: { pembagi: 12, toleransi: 1 },
     flag: {
       nilaiAktif: ['1'],
       remarkPerField: true,

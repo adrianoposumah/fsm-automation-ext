@@ -1424,6 +1424,11 @@
       const modeAngka = sp.tipe === 'angka';
       const biasa = el.tagName !== 'SELECT' && el.type !== 'checkbox';
       const baru = modeAngka ? angka(mentah) : String(mentah).trim();
+      const angkaDekat = (a, b) => {
+        const angkaA = angka(a);
+        const angkaB = angka(b);
+        return angkaA !== null && angkaB !== null && Math.abs(Number(angkaA) - Number(angkaB)) <= Math.max(0, Number(sp.toleransiAngka) || 0);
+      };
       out[k].lama = String(el.value || '').slice(0, 60);
       // [BARU] bentuk ternormalisasi untuk log perubahan (null bila tidak bisa dinormalkan / bukan field angka)
       out[k].lamaAngka = modeAngka ? angka(el.value) : null;
@@ -1431,7 +1436,7 @@
       if (a.hanyaCatatan) {
         // Flag 0 hanya meninggalkan catatan; nilai form tidak boleh disentuh.
         out[k].tidakDiubah = true;
-        out[k].sama = modeAngka ? angka(el.value) === baru : String(el.value) === baru;
+        out[k].sama = modeAngka ? angkaDekat(el.value, baru) : String(el.value) === baru;
       } else if (mentah === undefined || mentah === null || String(mentah).trim() === '') {
         out[k].diisi = false;
         out[k].alasan = 'sel kosong';

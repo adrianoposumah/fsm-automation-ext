@@ -479,17 +479,39 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
   // `_bln` hanya untuk field yang memang tidak ditemukan. Nilai Excel dan
   // catatan tetap memakai pemetaan field yang sama.
   const suffixFallback = blok.fieldFallbackSuffix;
+  let adaKonversiBulanan = false;
   if (suffixFallback) {
     for (const k of pilih) {
       if (!g[k] || g[k].ketemu) continue;
       const utama = fields[k];
       if (!utama || !utama.varId || utama.varId.endsWith(suffixFallback)) continue;
-      const alternatif = { ...utama, varId: utama.varId + suffixFallback };
+      const cfgBulanan = blok.fieldFallbackBulanan;
+      const alternatif = {
+        ...utama,
+        varId: utama.varId + suffixFallback,
+        ...(cfgBulanan ? { toleransiAngka: Math.max(0, Number(cfgBulanan.toleransi) || 0) } : {}),
+      };
       log(`${opsi.barisExcel ? `[baris ${opsi.barisExcel}] ` : ''}${k}: field utama ${utama.varId} tidak ditemukan; mencari ${alternatif.varId}`);
       const hasilFallback = await jalankanSatu('cek', k, {}, alternatif);
       if (hasilFallback && hasilFallback.ketemu) {
         fields[k] = alternatif;
         g[k] = hasilFallback;
+        if (mode === 'isi' && cfgBulanan && utama.tipe === 'angka') {
+          const nilaiTahunan = angkaNilai(nilai[k]);
+          const pembagi = Math.max(1, Number(cfgBulanan.pembagi) || 12);
+          if (nilaiTahunan === null) {
+            return {
+              status: `PERLU CEK MANUAL: nilai Excel ${k} tidak dapat dikonversi ke nilai bulanan`,
+              detail: `nilai Excel="${String(nilai[k] ?? '')}"; field fallback=${alternatif.varId}`,
+              identitas: teksIdn,
+              namaUsaha: opsi.namaUsaha,
+            };
+          }
+          const nilaiBulanan = String(Math.round(Number(nilaiTahunan) / pembagi));
+          log(`${opsi.barisExcel ? `[baris ${opsi.barisExcel}] ` : ''}${k} [ID ${alternatif.varId}]: nilai Excel tahunan ${nilaiTahunan} ÷ ${pembagi} = nilai bulanan ${nilaiBulanan}; toleransi cocok ±${alternatif.toleransiAngka}`);
+          nilai[k] = nilaiBulanan;
+          adaKonversiBulanan = true;
+        }
       }
     }
   }
@@ -501,14 +523,19 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
     return !(sp.opsional && (!g[k] || !g[k].ketemu));
   });
 
-  const angkaSama = (sp, a, b) => sp.tipe === 'angka' ? angkaNilai(a) !== null && angkaNilai(a) === angkaNilai(b) : String(a == null ? '' : a).trim() === String(b == null ? '' : b).trim();
+  const angkaSama = (sp, a, b) => {
+    if (sp.tipe !== 'angka') return String(a == null ? '' : a).trim() === String(b == null ? '' : b).trim();
+    const angkaA = angkaNilai(a);
+    const angkaB = angkaNilai(b);
+    return angkaA !== null && angkaB !== null && Math.abs(Number(angkaA) - Number(angkaB)) <= Math.max(0, Number(sp.toleransiAngka) || 0);
+  };
   let semuaCatatanMode0 = false;
   if (mode === 'isi' && blok.flag && blok.flag.prosesFlag0) {
     const berbeda = pilihUntukProses.filter((k) => {
       if (!opsi.flagNilai || opsi.flagNilai[k] !== '0') return false;
       const v = g[k];
       if (!v || !v.ketemu || v.ambigu || v.tersembunyi) return false;
-      return !angkaSama(blok.fields[k] || {}, v.nilai, nilai[k]);
+      return !angkaSama(fields[k] || blok.fields[k] || {}, v.nilai, nilai[k]);
     });
     if (berbeda.length) {
       // Jika validasi #0 gagal, jangan sentuh nilai form. Sebagai gantinya,
@@ -613,7 +640,13 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
     else if (!adaPerubahan && !adaCatatanBaru) status = semuaCatatanMode0
       ? 'SUDAH ADA: catatan #0 sudah tercatat; nilai tidak diubah dan tidak dikirim'
       : 'SUDAH SESUAI: semua field target sudah bernilai sama & catatan sudah ada; tidak dikirim';
-    else if (blok.flag.kirimPembaruan) status = terkirim ? (semuaCatatanMode0 ? 'DIISI & DIKIRIM: Tidak diubah #0' : adaPerubahan ? 'DIISI & DIKIRIM' : 'CATATAN DIISI & DIKIRIM') : `PERLU CEK MANUAL: ${adaPerubahan ? 'field terisi' : 'catatan terisi'} tetapi pembaruan tidak terkirim`;
+    else if (blok.flag.kirimPembaruan) status = terkirim
+      ? semuaCatatanMode0
+        ? 'DIISI & DIKIRIM: Tidak diubah #0'
+        : adaKonversiBulanan
+          ? 'DIISI & DIKIRIM : Nilai Excel dibagi 12 untuk Akumulasi Bulan'
+          : adaPerubahan ? 'DIISI & DIKIRIM' : 'CATATAN DIISI & DIKIRIM'
+      : `PERLU CEK MANUAL: ${adaPerubahan ? 'field terisi' : 'catatan terisi'} tetapi pembaruan tidak terkirim`;
     else status = adaPerubahan ? 'DRY-RUN: diisi, tidak disimpan' : 'DRY-RUN: nilai sudah sama, catatan terisi (tidak disimpan)';
   } else status = mode === 'isi' ? 'DRY-RUN: diisi, tidak disimpan' : 'CEK OK: semua field ketemu dan tampil';
   const catatan = pilih
