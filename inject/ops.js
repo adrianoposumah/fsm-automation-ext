@@ -1430,6 +1430,7 @@
       out[k].baruAngka = modeAngka ? baru : null;
       if (a.hanyaCatatan) {
         // Flag 0 hanya meninggalkan catatan; nilai form tidak boleh disentuh.
+        out[k].tidakDiubah = true;
         out[k].sama = modeAngka ? angka(el.value) === baru : String(el.value) === baru;
       } else if (mentah === undefined || mentah === null || String(mentah).trim() === '') {
         out[k].diisi = false;

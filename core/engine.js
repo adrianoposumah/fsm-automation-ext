@@ -423,6 +423,11 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
     if (v.tersembunyi) return log(`${awalan}${fase} ${k}${penanda}: ADA TAPI TIDAK TAMPIL`);
     if (v.ambigu) return log(`${awalan}${fase} ${k}${penanda}: AMBIGU (${v.ambigu} kandidat)`);
     if (fase === 'cek') return log(`${awalan}cek ${k}${penanda}: ditemukan${v.terkunci ? ' [terkunci]' : ''}`);
+    if (v.tidakDiubah) {
+      const cat = v.catatan;
+      const statusCatatan = cat && cat.dikirim ? 'DISIMPAN' : cat && (cat.dilewati || cat.sudahAda) ? 'SUDAH ADA' : cat && cat.ok ? 'TIDAK DISIMPAN' : 'GAGAL';
+      return log(`${awalan}isi ${k}${penanda}: nilai tidak diubah; catatan "${cat && cat.teks || '#0'}" ${statusCatatan}`);
+    }
     if (v.diisi) return log(`${awalan}isi ${k}${penanda}: "${v.lama ?? ''}" → "${v.baruAngka ?? nilai[k] ?? ''}"`);
     if (v.sama) return log(`${awalan}isi ${k}${penanda}: sudah sama ("${v.lama ?? ''}")`);
     return log(`${awalan}isi ${k}${penanda}: GAGAL${v.alasan ? ` — ${v.alasan}` : ''}`);
@@ -497,6 +502,7 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
   });
 
   const angkaSama = (sp, a, b) => sp.tipe === 'angka' ? angkaNilai(a) !== null && angkaNilai(a) === angkaNilai(b) : String(a == null ? '' : a).trim() === String(b == null ? '' : b).trim();
+  let semuaCatatanMode0 = false;
   if (mode === 'isi' && blok.flag && blok.flag.prosesFlag0) {
     const berbeda = pilihUntukProses.filter((k) => {
       if (!opsi.flagNilai || opsi.flagNilai[k] !== '0') return false;
@@ -505,12 +511,19 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
       return !angkaSama(blok.fields[k] || {}, v.nilai, nilai[k]);
     });
     if (berbeda.length) {
-      return {
-        status: 'DILEWATI: nilai flag=0 berbeda dari nilai halaman',
-        detail: berbeda.map((k) => `${k}: halaman="${g[k].nilai ?? ''}" vs Excel="${nilai[k] ?? ''}"`).join(' | '),
-        identitas: teksIdn,
-        namaUsaha: opsi.namaUsaha,
-      };
+      // Jika validasi #0 gagal, jangan sentuh nilai form. Sebagai gantinya,
+      // tandai semua field yang tersedia dengan catatan #0 agar bisa ditinjau.
+      semuaCatatanMode0 = true;
+      opsi.flagNilai = { ...(opsi.flagNilai || {}) };
+      for (const k of pilihUntukProses) {
+        opsi.flagNilai[k] = '0';
+        const catatanField = catatanIsi && catatanIsi.perField && catatanIsi.perField[k];
+        if (catatanField) {
+          catatanField.teks = '#0';
+          catatanField.hanyaJikaBerhasil = false;
+        }
+      }
+      log(`${opsi.barisExcel ? `[baris ${opsi.barisExcel}] ` : ''}Validasi #0 berbeda pada ${berbeda.join(', ')}; nilai tidak diubah dan semua catatan field yang tersedia akan diisi #0.`);
     }
   }
 
@@ -548,7 +561,8 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
   if (mode === 'isi' && blok.flag && !bermasalah.length) {
     gagalIsi = pilihUntukProses.filter((k) => {
       const v = g[k];
-      return !(v && (v.diisi || v.sama));
+      const catatanSelesai = v && v.catatan && v.catatan.ok && (v.catatan.dikirim || v.catatan.dilewati || v.catatan.sudahAda);
+      return !(v && (v.diisi || v.sama || (semuaCatatanMode0 && catatanSelesai)));
     });
     adaPerubahan = pilihUntukProses.some((k) => g[k] && g[k].diisi);
     adaCatatanBaru = pilihUntukProses.some((k) => g[k] && g[k].catatan && g[k].catatan.ok && !g[k].catatan.dilewati && !g[k].catatan.sudahAda);
@@ -581,6 +595,7 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
       if (mode === 'isi' && !bermasalah.length) {
         const cat = v.catatan;
         const catTxt = cat ? (cat.ok ? (cat.sudahAda || cat.dilewati ? `; catatan "${cat.teks}" SUDAH ADA` : `; catatan "${cat.teks}" ${cat.dikirim ? 'DISIMPAN' : 'terisi (tidak disimpan)'}`) : `; catatan GAGAL: ${cat.pesan || '?'}`) : '';
+        if (v.tidakDiubah) return `${k}: nilai tidak diubah${v.sama ? ' (sudah sama)' : ` (halaman "${v.lama}" ≠ Excel "${String(nilai[k] ?? '').trim()}")`}${catTxt}`;
         if (v.sama) return `${k}: sudah sama ("${v.lama}")${catTxt}`;
         return v.diisi ? `${k}: "${v.lama}" → "${String(nilai[k]).trim().slice(0, 60)}"${catTxt}` : `${k}: tidak terisi (${v.alasan || '?'}${v.lama !== undefined ? '; lama "' + v.lama + '"' : ''})${catTxt}`;
       }
@@ -592,9 +607,13 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
   let status;
   if (bermasalah.length) status = `${mode === 'isi' ? 'PERLU CEK MANUAL' : 'CEK GAGAL'}: ada field tidak ketemu/tidak tampil/ambigu${blok && blok.flag ? '/terkunci' : ''}${mode === 'isi' ? ', tidak ada yang diisi' : ''}`;
   else if (mode === 'isi' && blok && blok.flag) {
-    if (gagalIsi.length) status = `PERLU CEK MANUAL: field gagal diisi (${gagalIsi.join(', ')}); tidak dikirim`;
-    else if (!adaPerubahan && !adaCatatanBaru) status = 'SUDAH SESUAI: semua field target sudah bernilai sama & catatan sudah ada; tidak dikirim';
-    else if (blok.flag.kirimPembaruan) status = terkirim ? (adaPerubahan ? 'DIISI & DIKIRIM' : 'CATATAN DIISI & DIKIRIM') : `PERLU CEK MANUAL: ${adaPerubahan ? 'field terisi' : 'catatan terisi'} tetapi pembaruan tidak terkirim`;
+    if (gagalIsi.length) status = semuaCatatanMode0
+      ? `PERLU CEK MANUAL: catatan #0 gagal disimpan pada ${gagalIsi.join(', ')}; tidak dikirim`
+      : `PERLU CEK MANUAL: field gagal diisi (${gagalIsi.join(', ')}); tidak dikirim`;
+    else if (!adaPerubahan && !adaCatatanBaru) status = semuaCatatanMode0
+      ? 'SUDAH ADA: catatan #0 sudah tercatat; nilai tidak diubah dan tidak dikirim'
+      : 'SUDAH SESUAI: semua field target sudah bernilai sama & catatan sudah ada; tidak dikirim';
+    else if (blok.flag.kirimPembaruan) status = terkirim ? (semuaCatatanMode0 ? 'DIISI & DIKIRIM: Tidak diubah #0' : adaPerubahan ? 'DIISI & DIKIRIM' : 'CATATAN DIISI & DIKIRIM') : `PERLU CEK MANUAL: ${adaPerubahan ? 'field terisi' : 'catatan terisi'} tetapi pembaruan tidak terkirim`;
     else status = adaPerubahan ? 'DRY-RUN: diisi, tidak disimpan' : 'DRY-RUN: nilai sudah sama, catatan terisi (tidak disimpan)';
   } else status = mode === 'isi' ? 'DRY-RUN: diisi, tidak disimpan' : 'CEK OK: semua field ketemu dan tampil';
   const catatan = pilih
@@ -603,7 +622,7 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
     .join(' | ');
   const detailFlag =
     blok && blok.flag && mode === 'isi'
-      ? `${blok.flag.tanpaFlag ? 'target (semua field)' : 'target (flag=1)'}: ${pilih.join(', ')}`
+      ? `${semuaCatatanMode0 ? 'target (semua catatan #0; nilai tidak diubah)' : blok.flag.tanpaFlag ? 'target (semua field)' : 'target (flag=1)'}: ${pilih.join(', ')}`
       : '';
   // [BARU] Kolom yang diubah: "kolom_excel = lama → baru" (hanya field yang benar-benar terisi).
   const fmtNilai = (norm, mentah) => (norm !== null && norm !== undefined ? String(norm) : String(mentah == null ? '' : mentah).trim() || '(kosong)');
