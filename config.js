@@ -364,6 +364,77 @@ const BLOKS = {
     },
   },
 
+  // Varian remark untuk penginputan tujuh nilai usaha. Remark #1/#0 tetap
+  // menentukan apakah nilai diisi atau hanya divalidasi, tetapi mode ini
+  // tidak membuka/mengisi catatan per field. Langkah akhir hanya membuka
+  // proses Kirim dan menahannya sebagai dry-run (tanpa menyimpan).
+  'blok2-usaha-remark-7field': {
+    judul: 'Update Usaha per Catatan/Remark #1/#0 — 7 field (tanpa simpan)',
+    // Mode ini lanjut ke baris berikutnya segera setelah hasil akhir selesai.
+    jedaAntarBarisS: 0,
+    sidebar: {
+      blok: 'SE2026 - L BLOK II',
+      grup: 'Keterangan Usaha/Perusahaan',
+      // Format sidebar dapat memakai judul lama atau judul ringkas ini.
+      alternatif: ['BLOK II'],
+      item: { kolomExcel: 'nama_usaha', cocok: 'longgar', wajibTepat: 1 },
+    },
+    identitas: { varId: 'nama_komersial', label: 'Nama komersial' },
+    fields: {
+      Gaji: {
+        varId: 'gaji',
+        tipe: 'angka',
+        kolom: ['gaji'],
+      },
+      'Biaya Produksi': {
+        varId: 'biaya_produksi',
+        tipe: 'angka',
+        kolom: ['biaya_produksi'],
+      },
+      'Biaya Pembelian': {
+        varId: 'biaya_pembelian',
+        tipe: 'angka',
+        opsional: true,
+        kolom: ['biaya_pembelian'],
+      },
+      Operasional: {
+        varId: 'operasional',
+        tipe: 'angka',
+        kolom: ['operasional', 'biaya_operasional'],
+      },
+      'Non Operasional': {
+        varId: 'non_operasional',
+        tipe: 'angka',
+        kolom: ['non_operasional', 'biaya_non_operasional'],
+      },
+      'Nilai Pendapatan': {
+        varId: 'nilai_pendapatan',
+        tipe: 'angka',
+        kolom: ['nilai_pendapatan', 'pendapatan_barang_jasa'],
+      },
+      'Pendapatan Lain': {
+        varId: 'pendapatan_lain',
+        tipe: 'angka',
+        kolom: ['pendapatan_lain', 'pendapatan_lainnya'],
+      },
+    },
+    fieldFallbackSuffix: '_bln',
+    fieldFallbackSetelahTidakDitemukan: 2,
+    fieldFallbackBulanan: { pembagi: 12, toleransi: 1 },
+    flag: {
+      tanpaFlag: true,
+      // Sel kosong atau tanda strip pada Excel diperlakukan sebagai angka 0.
+      nilaiKosong: 0,
+      catatanPerField: false,
+      tanpaCatatan: true,
+      catatanWajib: false,
+      simpanCatatan: false,
+      kirimPembaruan: true,
+      langkahAkhir: true,
+      linkLangsung: true,
+    },
+  },
+
   // Validasi dan pembaruan KBLI berbasis kode. Nilai Excel lama wajib sama
   // dengan radio yang sedang terpilih; jika tidak sama, baris ditandai manual.
   'blok2-kbli': {
@@ -517,6 +588,11 @@ const MODES = {
     judul: 'Update Usaha per Catatan/Remark #1/#0 (tanpa simpan)',
     aksi: 'isi',
     blok: 'blok2-usaha-flag-catatan-otomatis',
+  },
+  'update-usaha-per-remark-7field': {
+    judul: 'Update Usaha per Catatan/Remark #1/#0 — 7 field (tanpa simpan)',
+    aksi: 'isi',
+    blok: 'blok2-usaha-remark-7field',
   },
   'kbli-validasi-update': {
     judul: 'Validasi & Update KBLI Usaha — Blok II',

@@ -70,8 +70,11 @@ function pilihDariFlag(baris, blok, petaKolom, petaFlag, petaCatatan, petaRemark
       flagNilai[k] = blok.flag.remarkPerField ? (flagMentah === '1' ? '1' : '0') : (flagAktif(baris[kolomPengendali], blok.flag) ? '1' : '0');
       if (flagNilai[k] === '0' && !blok.flag.prosesFlag0) continue;
     }
-    const mentah = petaKolom[k] ? baris[petaKolom[k]] : '';
-    if (String(mentah == null ? '' : mentah).trim() === '') {
+    let mentah = petaKolom[k] ? baris[petaKolom[k]] : '';
+    const teksMentah = String(mentah == null ? '' : mentah).trim();
+    const kosongSebagai = blok.flag && blok.flag.nilaiKosong !== undefined;
+    if (kosongSebagai && (teksMentah === '' || /^[-–—]+$/.test(teksMentah))) mentah = blok.flag.nilaiKosong;
+    if (!kosongSebagai && teksMentah === '') {
       if (blok.fields[k].opsional) continue;
       masalah.push(`${k}: nilai kosong`);
       continue;
@@ -312,6 +315,7 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
         await jalankanDiTab('usaha', {
           blok: blok.sidebar.blok,
           grup: blok.sidebar.grup,
+          blokAlternatif: blok.sidebar.alternatif,
           nama: opsi.namaUsaha,
           longgar: opsi.longgar,
           debug: opsi.debug,
@@ -366,7 +370,10 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
     nilai = {};
   for (const k of pilih) {
     fields[k] = blok.fields[k];
-    nilai[k] = opsi.petaKolom[k] ? baris[opsi.petaKolom[k]] : '';
+    const mentah = opsi.petaKolom[k] ? baris[opsi.petaKolom[k]] : '';
+    const teksMentah = String(mentah == null ? '' : mentah).trim();
+    const nilaiKosong = blok.flag && blok.flag.nilaiKosong;
+    nilai[k] = nilaiKosong !== undefined && (teksMentah === '' || /^[-–—]+$/.test(teksMentah)) ? nilaiKosong : mentah;
   }
 
   // Mode "Tes pilih usaha" hanya berlaku untuk blok dengan item.
@@ -477,54 +484,56 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
         : { aktif: false }
     : CONFIG.CATATAN || { aktif: false };
 
-  // Cek semua field terlebih dahulu. Ini penting untuk mode flag: bila satu
-  // field flag=0 berbeda dari Excel, seluruh baris dilewati sebelum ada field
-  // flag=1 yang sempat diubah.
-  let g = {};
-  for (const k of pilih) {
-    const hasilCek = await jalankanSatu('cek', k, {});
-    g[k] = hasilCek;
-  }
-
-  // Bila seluruh field utama sudah diperiksa, coba ID alternatif berakhiran
-  // `_bln` hanya untuk field yang memang tidak ditemukan. Nilai Excel dan
-  // catatan tetap memakai pemetaan field yang sama.
   const suffixFallback = blok.fieldFallbackSuffix;
   let adaKonversiBulanan = false;
-  if (suffixFallback) {
-    for (const k of pilih) {
-      if (!g[k] || g[k].ketemu) continue;
-      const utama = fields[k];
-      if (!utama || !utama.varId || utama.varId.endsWith(suffixFallback)) continue;
-      const cfgBulanan = blok.fieldFallbackBulanan;
-      const alternatif = {
-        ...utama,
-        varId: utama.varId + suffixFallback,
-        ...(cfgBulanan ? { toleransiAngka: Math.max(0, Number(cfgBulanan.toleransi) || 0) } : {}),
-      };
-      log(`${opsi.barisExcel ? `[baris ${opsi.barisExcel}] ` : ''}${k}: field utama ${utama.varId} tidak ditemukan; mencari ${alternatif.varId}`);
-      const hasilFallback = await jalankanSatu('cek', k, {}, alternatif);
-      if (hasilFallback && hasilFallback.ketemu) {
-        fields[k] = alternatif;
-        g[k] = hasilFallback;
-        if (mode === 'isi' && cfgBulanan && utama.tipe === 'angka') {
-          const nilaiTahunan = angkaNilai(nilai[k]);
-          const pembagi = Math.max(1, Number(cfgBulanan.pembagi) || 12);
-          if (nilaiTahunan === null) {
-            return {
-              status: `PERLU CEK MANUAL: nilai Excel ${k} tidak dapat dikonversi ke nilai bulanan`,
-              detail: `nilai Excel="${String(nilai[k] ?? '')}"; field fallback=${alternatif.varId}`,
-              identitas: teksIdn,
-              namaUsaha: opsi.namaUsaha,
-            };
-          }
-          const nilaiBulanan = String(Math.round(Number(nilaiTahunan) / pembagi));
-          log(`${opsi.barisExcel ? `[baris ${opsi.barisExcel}] ` : ''}${k} [ID ${alternatif.varId}]: nilai Excel tahunan ${nilaiTahunan} ÷ ${pembagi} = nilai bulanan ${nilaiBulanan}; toleransi cocok ±${alternatif.toleransiAngka}`);
-          nilai[k] = nilaiBulanan;
-          adaKonversiBulanan = true;
-        }
-      }
+  const fallbackSudahDicoba = new Set();
+  const cobaFallback = async (k, g) => {
+    if (!suffixFallback || fallbackSudahDicoba.has(k) || !g[k] || g[k].ketemu) return;
+    const utama = fields[k];
+    if (!utama || !utama.varId || utama.varId.endsWith(suffixFallback)) return;
+    fallbackSudahDicoba.add(k);
+    const cfgBulanan = blok.fieldFallbackBulanan;
+    const alternatif = {
+      ...utama,
+      varId: utama.varId + suffixFallback,
+      ...(cfgBulanan ? { toleransiAngka: Math.max(0, Number(cfgBulanan.toleransi) || 0) } : {}),
+    };
+    log(`${opsi.barisExcel ? `[baris ${opsi.barisExcel}] ` : ''}${k}: field utama ${utama.varId} tidak ditemukan; mencari ${alternatif.varId}`);
+    const hasilFallback = await jalankanSatu('cek', k, {}, alternatif);
+    if (!hasilFallback || !hasilFallback.ketemu) return;
+    fields[k] = alternatif;
+    g[k] = hasilFallback;
+    if (mode === 'isi' && cfgBulanan && utama.tipe === 'angka') {
+      const nilaiTahunan = angkaNilai(nilai[k]);
+      const pembagi = Math.max(1, Number(cfgBulanan.pembagi) || 12);
+      if (nilaiTahunan === null) throw new Error(`nilai Excel ${k} tidak dapat dikonversi ke nilai bulanan`);
+      const nilaiBulanan = String(Math.round(Number(nilaiTahunan) / pembagi));
+      log(`${opsi.barisExcel ? `[baris ${opsi.barisExcel}] ` : ''}${k} [ID ${alternatif.varId}]: nilai Excel tahunan ${nilaiTahunan} ÷ ${pembagi} = nilai bulanan ${nilaiBulanan}; toleransi cocok ±${alternatif.toleransiAngka}`);
+      nilai[k] = nilaiBulanan;
+      adaKonversiBulanan = true;
     }
+  };
+
+  // Cek field utama. Untuk mode yang mengatur ambang, setelah dua field
+  // utama tidak ditemukan, fallback `_bln` dicari segera.
+  let g = {};
+  let utamaTidakDitemukan = 0;
+  let fallbackSegera = false;
+  const ambangFallback = Math.max(0, Number(blok.fieldFallbackSetelahTidakDitemukan) || 0);
+  for (const k of pilih) {
+    g[k] = await jalankanSatu('cek', k, {});
+    if (suffixFallback && g[k] && !g[k].ketemu) {
+      utamaTidakDitemukan++;
+      if (ambangFallback && utamaTidakDitemukan >= ambangFallback) fallbackSegera = true;
+    }
+    if (fallbackSegera) {
+      for (const target of pilih) await cobaFallback(target, g);
+    }
+  }
+  // Perilaku lama: bila ambang tidak is ingesteld, coba fallback setelah
+  // seluruh field utama selesai diperiksa.
+  if (suffixFallback && !fallbackSegera) {
+    for (const k of pilih) await cobaFallback(k, g);
   }
 
   // Field opsional yang memang tidak ada pada jenis usaha ini dikeluarkan dari
@@ -658,7 +667,11 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
           ? 'DIISI & DIKIRIM : Nilai Excel dibagi 12 untuk Akumulasi Bulan'
           : adaPerubahan ? 'DIISI & DIKIRIM' : 'CATATAN DIISI & DIKIRIM'
       : `PERLU CEK MANUAL: ${adaPerubahan ? 'field terisi' : 'catatan terisi'} tetapi pembaruan tidak terkirim`;
-    else status = adaPerubahan ? 'DRY-RUN: diisi, tidak disimpan' : 'DRY-RUN: nilai sudah sama, catatan terisi (tidak disimpan)';
+    else status = adaPerubahan
+      ? 'DRY-RUN: diisi, proses Kirim dibuka tanpa menyimpan'
+      : blok.flag.tanpaCatatan
+        ? 'DRY-RUN: nilai sudah sama, proses Kirim tidak diperlukan'
+        : 'DRY-RUN: nilai sudah sama, catatan terisi (tidak disimpan)';
   } else status = mode === 'isi' ? 'DRY-RUN: diisi, tidak disimpan' : 'CEK OK: semua field ketemu dan tampil';
   const catatan = pilih
     .map((k) => (g[k] && g[k].catatan && g[k].catatan.teks ? String(g[k].catatan.teks) : ''))
@@ -1396,7 +1409,9 @@ async function mulai() {
 
       // Jeda antar baris — DI LUAR if (r.akhir), jalan untuk semua jenis hasil.
       // Hormati stopFlag; jitter hanya MENAMBAH.
-      const jedaDasar = Number(CONFIG.JEDA_ANTAR_BARIS_S) || 0;
+      const jedaDasar = blok && blok.jedaAntarBarisS !== undefined
+        ? Math.max(0, Number(blok.jedaAntarBarisS) || 0)
+        : Number(CONFIG.JEDA_ANTAR_BARIS_S) || 0;
       const dilewati = String(r.status || '').startsWith('DILEWATI:');
       if (!dilewati && jedaDasar > 0 && i < target.length - 1 && !stopFlag) {
         const jeda = jedaDasar + Math.random() * jedaDasar;

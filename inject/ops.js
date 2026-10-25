@@ -258,7 +258,10 @@
         return false;
       };
 
-      const blok = await tunggu(() => headers(document).find((h) => judul(h) === norm(a.blok)), 10000);
+      const judulBlok = [a.blok, ...(Array.isArray(a.blokAlternatif) ? a.blokAlternatif : [])]
+        .filter(Boolean)
+        .map(norm);
+      const blok = await tunggu(() => headers(document).find((h) => judulBlok.includes(judul(h))), 10000);
       if (!blok) return { ada: false };
       if (!(await bukaHeader(blok))) return { ada: true, ok: false, pesan: 'Blok usaha tidak bisa dibuka' };
       const grup = await tunggu(() => headers(blok.nextElementSibling).find((h) => judul(h) === norm(a.grup)), 5000);

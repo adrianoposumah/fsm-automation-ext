@@ -208,7 +208,7 @@ function pasangPanel() {
     .join('');
   // Buka panel langsung pada mode remark yang diminta; mencegah pengguna
   // memulai mode lama yang dapat mengirim perubahan tanpa sengaja.
-  $('mode').value = 'update-usaha-per-flag-catatan';
+  $('mode').value = 'update-usaha-per-remark-7field';
   $('mode').onchange = renderKolomUpdate;
   $('pakaiUpdateFlag').addEventListener('change', (e) => {
     $('kolomUpdateFlag').disabled = !e.target.checked || !kolom.length;
@@ -347,12 +347,14 @@ function renderKolomUpdate() {
       )
       .join('');
     const catatanTetapPerFlag = !!blok.flag.catatanTetapPerFlag;
-    const barisCatatan = catatanTetapPerFlag
+    const barisCatatan = blok.flag.tanpaCatatan
+      ? '<small class="hint">Mode ini tidak mengisi catatan; setelah input langsung ke proses Kirim tanpa menyimpan.</small>'
+      : catatanTetapPerFlag
       ? ''
       : blok.flag.catatanPerField
         ? ''
         : `<div class="field-row"><span>Kolom catatan</span><select data-catatan="1">${opsiKol}</select><small class="pratinjau" data-info="catatan"></small></div>`;
-    const barisCatatanField = blok.flag.catatanPerField && !catatanTetapPerFlag && !blok.flag.remarkPerField
+    const barisCatatanField = !blok.flag.tanpaCatatan && blok.flag.catatanPerField && !catatanTetapPerFlag && !blok.flag.remarkPerField
       ? Object.keys(blok.fields).map((nama) => `<div class="field-row"><span>${esc(nama)} — catatan</span><select data-catatan-field="${esc(nama)}" title="Kolom catatan untuk field ini">${opsiKol}</select><small class="pratinjau" data-info="catatan-${esc(nama)}"></small></div>`).join('')
       : catatanTetapPerFlag ? '<small class="hint">Catatan/remark Excel: <code>#1</code> → isi nilai, <code>#0</code> → validasi nilai harus sama. Catatan halaman mengikuti nilai tersebut.</small>' : '';
     $('kolomUpdate').innerHTML = barisField + barisCatatan + barisCatatanField;
