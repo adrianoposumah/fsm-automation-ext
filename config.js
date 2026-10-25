@@ -419,7 +419,6 @@ const BLOKS = {
       },
     },
     fieldFallbackSuffix: '_bln',
-    fieldFallbackSetelahTidakDitemukan: 2,
     fieldFallbackBulanan: { pembagi: 12, toleransi: 1 },
     flag: {
       tanpaFlag: true,

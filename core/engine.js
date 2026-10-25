@@ -486,23 +486,9 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
 
   const suffixFallback = blok.fieldFallbackSuffix;
   let adaKonversiBulanan = false;
-  const fallbackSudahDicoba = new Set();
-  const cobaFallback = async (k, g) => {
-    if (!suffixFallback || fallbackSudahDicoba.has(k) || !g[k] || g[k].ketemu) return;
-    const utama = fields[k];
-    if (!utama || !utama.varId || utama.varId.endsWith(suffixFallback)) return;
-    fallbackSudahDicoba.add(k);
-    const cfgBulanan = blok.fieldFallbackBulanan;
-    const alternatif = {
-      ...utama,
-      varId: utama.varId + suffixFallback,
-      ...(cfgBulanan ? { toleransiAngka: Math.max(0, Number(cfgBulanan.toleransi) || 0) } : {}),
-    };
-    log(`${opsi.barisExcel ? `[baris ${opsi.barisExcel}] ` : ''}${k}: field utama ${utama.varId} tidak ditemukan; mencari ${alternatif.varId}`);
-    const hasilFallback = await jalankanSatu('cek', k, {}, alternatif);
-    if (!hasilFallback || !hasilFallback.ketemu) return;
+  const terapkanFallback = (k, utama, alternatif, hasilFallback) => {
     fields[k] = alternatif;
-    g[k] = hasilFallback;
+    const cfgBulanan = blok.fieldFallbackBulanan;
     if (mode === 'isi' && cfgBulanan && utama.tipe === 'angka') {
       const nilaiTahunan = angkaNilai(nilai[k]);
       const pembagi = Math.max(1, Number(cfgBulanan.pembagi) || 12);
@@ -512,28 +498,47 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
       nilai[k] = nilaiBulanan;
       adaKonversiBulanan = true;
     }
+    return hasilFallback;
   };
 
-  // Cek field utama. Untuk mode yang mengatur ambang, setelah dua field
-  // utama tidak ditemukan, fallback `_bln` dicari segera.
+  // Cari ID utama dan ID `_bln` bersamaan. Promise selesai segera ketika
+  // salah satu varian menemukan field; varian lain tidak perlu ditunggu.
+  const cekBersamaan = async (k) => {
+    const utama = fields[k];
+    if (!suffixFallback || !utama || !utama.varId || utama.varId.endsWith(suffixFallback)) return { hasil: await jalankanSatu('cek', k, {}), spec: utama };
+    const alternatif = {
+      ...utama,
+      varId: utama.varId + suffixFallback,
+      ...(blok.fieldFallbackBulanan ? { toleransiAngka: Math.max(0, Number(blok.fieldFallbackBulanan.toleransi) || 0) } : {}),
+    };
+    const buatCek = (spec) =>
+      jalankanDiTab('cek', {
+        fields: { [k]: spec },
+        jedaMs: CONFIG.JEDA_FIELD_MS,
+        tungguFieldMs: spec.opsional ? CONFIG.TUNGGU_FIELD_OPSIONAL_MS : CONFIG.TUNGGU_FIELD_MS,
+      }).then((daftar) => ({ hasil: gabung(daftar)[k], spec }));
+    const selesai = [buatCek(utama), buatCek(alternatif)];
+    let jumlahSelesai = 0;
+    const hasilTidakKetemu = [];
+    const pertamaDitemukan = await new Promise((resolve) => {
+      selesai.forEach((p) => p.then((r) => {
+        if (r.hasil && r.hasil.ketemu) return resolve(r);
+        hasilTidakKetemu.push(r);
+        jumlahSelesai++;
+        if (jumlahSelesai === selesai.length) resolve(hasilTidakKetemu.find((x) => x.spec === utama) || hasilTidakKetemu[0]);
+      }));
+    });
+    logField('cek', k, pertamaDitemukan.hasil, pertamaDitemukan.spec);
+    if (pertamaDitemukan.spec === alternatif && pertamaDitemukan.hasil && pertamaDitemukan.hasil.ketemu) {
+      pertamaDitemukan.hasil = terapkanFallback(k, utama, alternatif, pertamaDitemukan.hasil);
+    }
+    return pertamaDitemukan;
+  };
+
   let g = {};
-  let utamaTidakDitemukan = 0;
-  let fallbackSegera = false;
-  const ambangFallback = Math.max(0, Number(blok.fieldFallbackSetelahTidakDitemukan) || 0);
   for (const k of pilih) {
-    g[k] = await jalankanSatu('cek', k, {});
-    if (suffixFallback && g[k] && !g[k].ketemu) {
-      utamaTidakDitemukan++;
-      if (ambangFallback && utamaTidakDitemukan >= ambangFallback) fallbackSegera = true;
-    }
-    if (fallbackSegera) {
-      for (const target of pilih) await cobaFallback(target, g);
-    }
-  }
-  // Perilaku lama: bila ambang tidak is ingesteld, coba fallback setelah
-  // seluruh field utama selesai diperiksa.
-  if (suffixFallback && !fallbackSegera) {
-    for (const k of pilih) await cobaFallback(k, g);
+    const hasilCek = await cekBersamaan(k);
+    g[k] = hasilCek.hasil;
   }
 
   // Field opsional yang memang tidak ada pada jenis usaha ini dikeluarkan dari
