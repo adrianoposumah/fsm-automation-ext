@@ -73,6 +73,8 @@ const CONFIG = {
     maksimal: 2,
     jedaMs: 15000,
   },
+  // Cek cepat apakah Revoke tersedia segera setelah pencarian Edit pertama gagal.
+  TUNGGU_REVOKE_DETEKSI_MS: 3000,
 
   // Kalkulasi total & skip jika minus.
   //   pengeluaran = gaji + biaya_produksi + biaya_pembelian + operasional + non_operasional
@@ -354,6 +356,7 @@ const BLOKS = {
       catatanTeksPerNilai: { 0: '#0', 1: '#1' },
       catatanWajib: false,
       catatanJikaSama: true,
+      opsiPaksaIsiExcel: true,
       simpanCatatan: true,
       kirimPembaruan: true,
       langkahAkhir: true,

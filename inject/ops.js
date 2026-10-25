@@ -206,6 +206,12 @@
       return { jumlah: b.length };
     },
 
+    async hitungRevoke(a) {
+      const cari = () => [...document.querySelectorAll('button')].filter((b) => terlihat(b) && [...b.querySelectorAll('svg')].some((svg) => svg.classList.contains('tabler-icon-rotate-clockwise')));
+      const b = (await tunggu(cari, Number(a && a.ms) || 3000)) || [];
+      return { jumlah: b.length };
+    },
+
     async klikEdit(a) {
       const b = (await tunggu(() => [...document.querySelectorAll(a.css)], a.ms)) || [];
       if (b.length === 1) b[0].click();
@@ -1446,7 +1452,7 @@
       } else if (out[k].terkunci) {
         out[k].diisi = false;
         out[k].alasan = 'field terkunci';
-      } else if (biasa && (modeAngka ? angka(el.value) : String(el.value)) === baru) {
+      } else if (!a.paksaIsiExcel && biasa && (modeAngka ? angka(el.value) : String(el.value)) === baru) {
         out[k].diisi = false;
         out[k].sama = true;
       } else {

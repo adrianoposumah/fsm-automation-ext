@@ -236,6 +236,8 @@ function pasangPanel() {
 function renderKolomUpdate() {
   const mode = MODES[$('mode').value];
   const blok = mode && mode.blok ? BLOKS[mode.blok] : null;
+  const barisPaksaIsi = $('opsiPaksaIsiExcelRow');
+  if (barisPaksaIsi) barisPaksaIsi.style.display = blok && blok.flag && blok.flag.opsiPaksaIsiExcel ? '' : 'none';
 
   if (!blok) {
     $('kolomUpdate').innerHTML = '<small class="hint">(mode ini tidak mengisi field)</small>';

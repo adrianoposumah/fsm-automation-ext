@@ -24,6 +24,12 @@ async function ulangiCariEdit(jumlah, jenisOp, ms, limiter) {
   return { jumlah: hasil, percobaan };
 }
 
+async function hitungTombolRevoke(limiter) {
+  await limiter.tunggu('filter');
+  const ms = Math.max(0, Number(CONFIG.TUNGGU_REVOKE_DETEKSI_MS) || 3000);
+  return jumlahDari(await jalankanDiTab('hitungRevoke', { ms }));
+}
+
 // Normalisasi angka yang sama dengan operasi injeksi, untuk validasi flag=0
 // sebelum field lain di baris tersebut diisi.
 function angkaNilai(v) {
@@ -260,27 +266,32 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
 
   await limiter.tunggu('filter');
   let nEdit = jumlahDari(await jalankanDiTab('klikEdit', { css: CONFIG.EDIT_CSS, ms: 10000 }));
-  nEdit = (await ulangiCariEdit(nEdit, 'klikEdit', 10000, limiter)).jumlah;
   if (nEdit === 0 && (await butuhLogin(true))) throw new SesiHabis();
   let revoked = false;
   if (nEdit === 0) {
-    // Assignment approved kadang tidak menampilkan Edit. Ikuti alur mode KBLI:
-    // Revoke dulu, tunggu refresh, lalu cari dan klik Edit ulang.
-    await limiter.tunggu('filter');
-    const siapRefresh = tungguTab(workTabId, 15000).catch(() => null);
-    const revoke = await jalankanDiTab('revoke', { css: CONFIG.REVOKE_CSS, ms: 10000 });
-    const hasilRevoke = revoke.find((x) => x && x.jumlah !== undefined);
-    if (!hasilRevoke || hasilRevoke.jumlah !== 1 || !hasilRevoke.dikonfirmasi) {
-      return {
-        status: 'PERLU CEK MANUAL: tombol Edit tidak ada dan Revoke tidak berhasil',
-        detail: (hasilRevoke && hasilRevoke.pesan) || 'tombol Revoke tidak ditemukan atau konfirmasi gagal',
-      };
+    const jumlahRevoke = await hitungTombolRevoke(limiter);
+    if (jumlahRevoke === 1) {
+      await limiter.tunggu('filter');
+      const siapRefresh = tungguTab(workTabId, 15000).catch(() => null);
+      const revoke = await jalankanDiTab('revoke', { css: CONFIG.REVOKE_CSS, ms: 10000 });
+      const hasilRevoke = revoke.find((x) => x && x.jumlah !== undefined);
+      if (!hasilRevoke || hasilRevoke.jumlah !== 1 || !hasilRevoke.dikonfirmasi) {
+        return {
+          status: 'PERLU CEK MANUAL: tombol Edit tidak ada dan Revoke tidak berhasil',
+          detail: (hasilRevoke && hasilRevoke.pesan) || 'tombol Revoke ditemukan tetapi konfirmasi gagal',
+        };
+      }
+      revoked = true;
+      await siapRefresh;
+      await limiter.tunggu('filter');
+      nEdit = jumlahDari(await jalankanDiTab('klikEdit', { css: CONFIG.EDIT_CSS, ms: 10000 }));
+      nEdit = (await ulangiCariEdit(nEdit, 'klikEdit', 10000, limiter)).jumlah;
+    } else if (jumlahRevoke === 0) {
+      // Bila Revoke tidak tersedia, selesaikan sisa dua percobaan Edit.
+      nEdit = (await ulangiCariEdit(nEdit, 'klikEdit', 10000, limiter)).jumlah;
+    } else {
+      return { status: `PERLU CEK MANUAL: tombol Revoke ditemukan ${jumlahRevoke} (ambigu)` };
     }
-    revoked = true;
-    await siapRefresh;
-    await limiter.tunggu('filter');
-    nEdit = jumlahDari(await jalankanDiTab('klikEdit', { css: CONFIG.EDIT_CSS, ms: 10000 }));
-    nEdit = (await ulangiCariEdit(nEdit, 'klikEdit', 10000, limiter)).jumlah;
   }
   if (nEdit !== 1) return { status: `PERLU CEK MANUAL: tombol Edit ${revoked ? 'belum muncul setelah Revoke' : 'ditemukan ' + nEdit}${langsung ? ' (link langsung: pastikan URL = halaman detail yang memuat tombol Edit)' : ''}` };
   if (!(await tungguUrl((p) => /(?:^|\/)edit(?:\/|$)/.test(p), 10000))) {
@@ -530,7 +541,7 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
     return angkaA !== null && angkaB !== null && Math.abs(Number(angkaA) - Number(angkaB)) <= Math.max(0, Number(sp.toleransiAngka) || 0);
   };
   let semuaCatatanMode0 = false;
-  if (mode === 'isi' && blok.flag && blok.flag.prosesFlag0) {
+  if (mode === 'isi' && blok.flag && blok.flag.prosesFlag0 && !opsi.paksaIsiExcel) {
     const berbeda = pilihUntukProses.filter((k) => {
       if (!opsi.flagNilai || opsi.flagNilai[k] !== '0') return false;
       const v = g[k];
@@ -560,8 +571,8 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
     const catatanOpsionalKosong = sp.opsional && hasilCek && hasilCek.ketemu && blok.flag && blok.flag.catatanPerField && !blok.flag.catatanTetapPerFlag && blok.flag.catatanWajib !== false && (!opsi.teksCatatan || !String(opsi.teksCatatan[k] || '').trim());
     const tidakValid = !hasilCek || !hasilCek.ketemu || hasilCek.ambigu || hasilCek.tersembunyi || (blok.flag && hasilCek.terkunci) || catatanOpsionalKosong;
     if (mode === 'isi' && !tidakValid) {
-      const hanyaCatatan = !!(blok.flag && blok.flag.prosesFlag0 && opsi.flagNilai && opsi.flagNilai[k] === '0');
-      g[k] = await jalankanSatu('isi', k, { nilai, catatan: catatanIsi, hanyaCatatan });
+      const hanyaCatatan = !opsi.paksaIsiExcel && !!(blok.flag && blok.flag.prosesFlag0 && opsi.flagNilai && opsi.flagNilai[k] === '0');
+      g[k] = await jalankanSatu('isi', k, { nilai, catatan: catatanIsi, hanyaCatatan, paksaIsiExcel: !!opsi.paksaIsiExcel });
     }
   }
 
@@ -655,7 +666,7 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
     .join(' | ');
   const detailFlag =
     blok && blok.flag && mode === 'isi'
-      ? `${semuaCatatanMode0 ? 'target (semua catatan #0; nilai tidak diubah)' : blok.flag.tanpaFlag ? 'target (semua field)' : 'target (flag=1)'}: ${pilih.join(', ')}`
+      ? `${semuaCatatanMode0 ? 'target (semua catatan #0; nilai tidak diubah)' : opsi.paksaIsiExcel ? 'target (semua field dari Excel; paksa input)' : blok.flag.tanpaFlag ? 'target (semua field)' : 'target (flag=1)'}: ${pilih.join(', ')}`
       : '';
   // [BARU] Kolom yang diubah: "kolom_excel = lama → baru" (hanya field yang benar-benar terisi).
   const fmtNilai = (norm, mentah) => (norm !== null && norm !== undefined ? String(norm) : String(mentah == null ? '' : mentah).trim() || '(kosong)');
@@ -701,23 +712,30 @@ async function alurKBLI(baris, link, petaKBLI, limiter) {
   // Assignment approved yang tidak punya Edit kemudian ditangani dengan Revoke.
   await limiter.tunggu('filter');
   let nEdit = jumlahDari(await jalankanDiTab('klikEdit', { css: CONFIG.EDIT_CSS, ms: 10000 }));
-  nEdit = (await ulangiCariEdit(nEdit, 'klikEdit', 10000, limiter)).jumlah;
   if (nEdit === 0 && (await butuhLogin(true))) throw new SesiHabis();
   let revoked = false;
   if (nEdit === 0) {
-    await limiter.tunggu('filter');
-    const siapRefresh = tungguTab(workTabId, 15000).catch(() => null);
-    const revoke = await jalankanDiTab('revoke', { css: CONFIG.REVOKE_CSS, ms: 10000 });
-    const hasilRevoke = revoke.find((x) => x && x.jumlah !== undefined);
-    if (!hasilRevoke || hasilRevoke.jumlah !== 1 || !hasilRevoke.dikonfirmasi)
-      return {
-        status: 'PERLU CEK MANUAL: tombol Edit tidak ada dan Revoke tidak berhasil',
-        detail: (hasilRevoke && hasilRevoke.pesan) || 'tombol Revoke tidak ditemukan atau konfirmasi gagal',
-      };
-    revoked = true;
-    await siapRefresh;
-    nEdit = jumlahDari(await jalankanDiTab('klikEdit', { css: CONFIG.EDIT_CSS, ms: 10000 }));
-    nEdit = (await ulangiCariEdit(nEdit, 'klikEdit', 10000, limiter)).jumlah;
+    const jumlahRevoke = await hitungTombolRevoke(limiter);
+    if (jumlahRevoke === 1) {
+      await limiter.tunggu('filter');
+      const siapRefresh = tungguTab(workTabId, 15000).catch(() => null);
+      const revoke = await jalankanDiTab('revoke', { css: CONFIG.REVOKE_CSS, ms: 10000 });
+      const hasilRevoke = revoke.find((x) => x && x.jumlah !== undefined);
+      if (!hasilRevoke || hasilRevoke.jumlah !== 1 || !hasilRevoke.dikonfirmasi)
+        return {
+          status: 'PERLU CEK MANUAL: tombol Edit tidak ada dan Revoke tidak berhasil',
+          detail: (hasilRevoke && hasilRevoke.pesan) || 'tombol Revoke ditemukan tetapi konfirmasi gagal',
+        };
+      revoked = true;
+      await siapRefresh;
+      await limiter.tunggu('filter');
+      nEdit = jumlahDari(await jalankanDiTab('klikEdit', { css: CONFIG.EDIT_CSS, ms: 10000 }));
+      nEdit = (await ulangiCariEdit(nEdit, 'klikEdit', 10000, limiter)).jumlah;
+    } else if (jumlahRevoke === 0) {
+      nEdit = (await ulangiCariEdit(nEdit, 'klikEdit', 10000, limiter)).jumlah;
+    } else {
+      return { status: `PERLU CEK MANUAL: tombol Revoke ditemukan ${jumlahRevoke} (ambigu)` };
+    }
   }
   if (nEdit !== 1) return { status: `PERLU CEK MANUAL: tombol Edit ${revoked ? 'belum muncul setelah Revoke' : 'ditemukan ' + nEdit}` };
   if (!(await tungguUrl((p) => /(?:^|\/)edit(?:\/|$)/.test(p), 10000))) {
@@ -907,44 +925,64 @@ async function alurKK(baris, link, petaKK, limiter) {
 
   // 8) Cek tombol Edit
   let nEdit = jumlahDari(await jalankanDiTab('hitung', { css: CONFIG.EDIT_CSS, ms: 5000 }));
-  nEdit = (await ulangiCariEdit(nEdit, 'hitung', 5000, limiter)).jumlah;
 
-  // 9) Jika tidak ada tombol Edit (mis. assignment approved), tarik (revoke)
-  // terlebih dahulu agar tombol Edit muncul.
+  // 9) Jika Edit belum ada, cek Revoke segera sebelum menghabiskan retry Edit.
   if (nEdit === 0) {
-    await limiter.tunggu('filter');
-    const siapRefresh = tungguTab(workTabId, 15000).catch(() => null);
-    const revoke = await jalankanDiTab('revoke', {
-      css: CONFIG.REVOKE_CSS,
-      ms: 10000,
-    });
-    const hasilRevoke = revoke.find((x) => x && x.jumlah !== undefined);
-    if (!hasilRevoke || hasilRevoke.jumlah !== 1 || !hasilRevoke.dikonfirmasi)
-      return {
-        status: 'PERLU CEK MANUAL: tombol Edit tidak ada dan Revoke tidak berhasil',
-        detail: (hasilRevoke && hasilRevoke.pesan ? hasilRevoke.pesan + ' | ' : '') + detailValidasi,
-        konfirmasiAwal: konfAwal,
-        konfirmasiAkhir: konfAwal,
-        identitas: teksIdn,
-      };
-    await siapRefresh;
-
-    nEdit = jumlahDari(
-      await jalankanDiTab('hitung', {
-        css: CONFIG.EDIT_CSS,
+    const jumlahRevoke = await hitungTombolRevoke(limiter);
+    if (jumlahRevoke === 1) {
+      await limiter.tunggu('filter');
+      const siapRefresh = tungguTab(workTabId, 15000).catch(() => null);
+      const revoke = await jalankanDiTab('revoke', {
+        css: CONFIG.REVOKE_CSS,
         ms: 10000,
-      }),
-    );
-    nEdit = (await ulangiCariEdit(nEdit, 'hitung', 10000, limiter)).jumlah;
-    if (nEdit !== 1)
+      });
+      const hasilRevoke = revoke.find((x) => x && x.jumlah !== undefined);
+      if (!hasilRevoke || hasilRevoke.jumlah !== 1 || !hasilRevoke.dikonfirmasi)
+        return {
+          status: 'PERLU CEK MANUAL: tombol Edit tidak ada dan Revoke tidak berhasil',
+          detail: (hasilRevoke && hasilRevoke.pesan ? hasilRevoke.pesan + ' | ' : '') + detailValidasi,
+          konfirmasiAwal: konfAwal,
+          konfirmasiAkhir: konfAwal,
+          identitas: teksIdn,
+        };
+      await siapRefresh;
+
+      nEdit = jumlahDari(
+        await jalankanDiTab('hitung', {
+          css: CONFIG.EDIT_CSS,
+          ms: 10000,
+        }),
+      );
+      nEdit = (await ulangiCariEdit(nEdit, 'hitung', 10000, limiter)).jumlah;
+      if (nEdit !== 1)
+        return {
+          status: 'PERLU CEK MANUAL: tombol Edit belum muncul setelah Revoke',
+          detail: `Revoke diklik, tetapi tombol Edit ditemukan ${nEdit} | ${detailValidasi}`,
+          konfirmasiAwal: konfAwal,
+          konfirmasiAkhir: konfAwal,
+          identitas: teksIdn,
+        };
+    } else if (jumlahRevoke === 0) {
+      nEdit = (await ulangiCariEdit(nEdit, 'hitung', 5000, limiter)).jumlah;
+    } else {
       return {
-        status: 'PERLU CEK MANUAL: tombol Edit belum muncul setelah Revoke',
-        detail: `Revoke diklik, tetapi tombol Edit ditemukan ${nEdit} | ${detailValidasi}`,
+        status: `PERLU CEK MANUAL: tombol Revoke ditemukan ${jumlahRevoke} (ambigu)`,
+        detail: detailValidasi,
         konfirmasiAwal: konfAwal,
         konfirmasiAkhir: konfAwal,
         identitas: teksIdn,
       };
+    }
   }
+
+  if (nEdit !== 1)
+    return {
+      status: `PERLU CEK MANUAL: tombol Edit ditemukan ${nEdit}`,
+      detail: detailValidasi,
+      konfirmasiAwal: konfAwal,
+      konfirmasiAkhir: konfAwal,
+      identitas: teksIdn,
+    };
 
   // 11) Klik Edit (semua pencatatan dilakukan di halaman /edit)
   await limiter.tunggu('filter');
@@ -1135,6 +1173,7 @@ async function mulai() {
 
   // [BARU] Mode flag: kolom flag per field + kolom catatan dari dropdown panel.
   const flagCfg = blok && blok.flag ? blok.flag : null;
+  const paksaIsiExcel = !!(flagCfg && flagCfg.opsiPaksaIsiExcel && $('paksaIsiExcel').checked);
   const petaFlag = {};
   const petaRemark = {};
   let kolomCatatan = '';
@@ -1210,6 +1249,7 @@ async function mulai() {
   let jumlahGagal = 0;
   perbaruiPanelProgres('Menyiapkan…', 0, 0);
   log(`Mulai: ${target.length} baris dari Excel baris ${mulaiBaris}, mode ${modeId}, profil ${$('profil').value}.`);
+  if (paksaIsiExcel) log('Opsi paksa input aktif: nilai semua field tersedia akan diisi dari Excel; remark #0/#1 tetap diikuti, tanpa validasi kesamaan nilai.');
   if (pakaiUpdateFlag) log(`Filter update_flag aktif dari kolom '${kolomUpdateFlag}' (0 = lewati, 1 = proses).`);
   try {
     await buka(`https://${CONFIG.HOST}${CONFIG.START_PATH}`, limiter).catch((e) => {
@@ -1265,6 +1305,7 @@ async function mulai() {
               blok,
               masalahFlag,
               flagNilai: flagNilaiBaris || {},
+              paksaIsiExcel,
               teksCatatan: flagCfg && flagCfg.catatanPerField
                 ? Object.fromEntries(Object.entries(petaCatatan).map(([k, kol]) => [k, String(baris[kol] == null ? '' : baris[kol]).trim()]))
                 : flagCfg ? String(baris[kolomCatatan] == null ? '' : baris[kolomCatatan]).trim() : '',
