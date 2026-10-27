@@ -297,9 +297,26 @@
           <button id="btnScan">Pindai halaman</button>
         </div>
         <small class="hint">
-          Login SSO dilakukan manual di jendela kerja. Biarkan jendela itu terlihat (jangan diminimalkan).
+          Biarkan jendela kerja terlihat (jangan diminimalkan).
           <span id="infoCaraTab"></span>
         </small>
+        <div class="row" style="align-items:flex-start; flex-wrap:wrap; margin-top:10px">
+          <label style="display:flex; gap:8px; align-items:center; min-width:220px">
+            <input type="checkbox" id="loginOtomatis" />
+            Login SSO otomatis
+          </label>
+          <div id="kredensialSSO" style="display:none; flex:1; min-width:280px">
+            <div class="row">
+              <label class="label" for="usernameSSO">Username/email</label>
+              <input id="usernameSSO" type="text" autocomplete="off" placeholder="Username atau email" />
+            </div>
+            <div class="row">
+              <label class="label" for="passwordSSO">Password</label>
+              <input id="passwordSSO" type="password" autocomplete="off" placeholder="Password" />
+            </div>
+            <small class="hint">Kredensial hanya dipakai sementara untuk mengisi form SSO dan tidak disimpan atau ditulis ke log.</small>
+          </div>
+        </div>
       </div>
     </section>
 

@@ -2,6 +2,7 @@
 const CONFIG = {
   // Host persis seperti di address bar Chrome, tanpa https://  (contoh: "contoh.go.id")
   HOST: 'fasih-sm.bps.go.id',
+  SSO_HOST: 'sso.bps.go.id',
   START_PATH: '/app/',
   KOLOM_LINK: 'assignment_link', // tebakan awal kolom link (bisa diganti di panel)
   KOLOM_USAHA: 'nama_usaha', // tebakan awal kolom nama usaha (bisa diganti di panel)

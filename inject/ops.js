@@ -170,6 +170,44 @@
       return { utama, butuhLogin: ((await tunggu(cari, a.ms)) || []).length > 0 };
     },
 
+    // Halaman assignment kadang menampilkan tombol Home + Refresh ketika data
+    // hasil fetch belum siap atau sesi aplikasi sudah kembali ke halaman awal.
+    // Operasi ini hanya membaca tampilan; kredensial tidak pernah dibaca.
+    kondisiHalaman() {
+      const tombolRefresh = [...document.querySelectorAll('button')].filter((b) => {
+        if (!terlihat(b)) return false;
+        const svgRefresh = b.querySelector('svg.tabler-icon-refresh');
+        const wadah = b.parentElement;
+        return svgRefresh && wadah && !!wadah.querySelector('svg.tabler-icon-home-spark');
+      });
+      const login = [...document.querySelectorAll('a[href], button')].filter((el) => {
+        const href = el.getAttribute('href') || '';
+        const teks = norm(el.textContent);
+        return terlihat(el) && (/\/app\/auth\/login(?:[/?#]|$)/.test(href) || teks.includes('lanjutkan dengan sso'));
+      });
+      const path = location.pathname || '';
+      const assignment = /\/app\/assignment(?:\/|$)/.test(path);
+      return {
+        utama,
+        url: location.href,
+        assignment,
+        home: !assignment && /\/app(?:\/|$)/.test(path),
+        perluRefresh: assignment && tombolRefresh.length > 0,
+        login: login.length > 0,
+      };
+    },
+
+    klikRefreshHalaman() {
+      const tombol = [...document.querySelectorAll('button')].find((b) => {
+        if (!terlihat(b) || !b.querySelector('svg.tabler-icon-refresh')) return false;
+        const wadah = b.parentElement;
+        return wadah && !!wadah.querySelector('svg.tabler-icon-home-spark');
+      });
+      if (!tombol) return { utama, diklik: false };
+      tombol.click();
+      return { utama, diklik: true };
+    },
+
     klikSSO(a) {
       const l = [...document.querySelectorAll('a,button')].filter((x) => norm(x.textContent).includes(norm(a.teks)));
       if (l.length) {
@@ -177,6 +215,23 @@
         return { utama, diklik: true };
       }
       return { utama, diklik: false };
+    },
+
+    isiSSO(a) {
+      const username = document.querySelector('#username, input[name="username"]');
+      const password = document.querySelector('#password, input[name="password"]');
+      const submit = document.querySelector('#kc-login, input[type="submit"][name="login"], button[type="submit"]');
+      if (!username || !password || !submit) return { utama, terisi: false, pesan: 'form SSO tidak lengkap' };
+      const isi = (el, nilai) => {
+        const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, String(nilai ?? ''));
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      };
+      isi(username, a.username);
+      isi(password, a.password);
+      submit.click();
+      return { utama, terisi: true };
     },
 
     scan() {

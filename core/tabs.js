@@ -60,7 +60,53 @@ async function butuhLogin(cekDom) {
   return r.some((x) => x.butuhLogin);
 }
 
+function loginOtomatisDipilih() {
+  return !!document.getElementById('loginOtomatis')?.checked;
+}
+
+async function tungguLoginOtomatis() {
+  const usernameEl = document.getElementById('usernameSSO');
+  const passwordEl = document.getElementById('passwordSSO');
+  let username = usernameEl ? usernameEl.value : '';
+  let password = passwordEl ? passwordEl.value : '';
+  if (!username || !password) throw new Berhenti('Login otomatis dipilih, tetapi username atau password belum diisi.');
+
+  log('Sesi belum aktif. Menjalankan login SSO otomatis...');
+  await chrome.windows.update(workWinId, { focused: true });
+  let sudahKlikSSO = false;
+  let sudahKirim = false;
+  try {
+    for (let i = 0; i < 150 && !stopFlag; i++) {
+      if (!(await butuhLogin(true).catch(() => true))) {
+        log('Login terdeteksi.');
+        return;
+      }
+      const tab = await chrome.tabs.get(workTabId);
+      const u = new URL(tab.url || tab.pendingUrl || 'about:blank');
+      if (u.host === CONFIG.HOST && !sudahKlikSSO) {
+        const r = await jalankanDiTab('klikSSO', { teks: CONFIG.TEKS_SSO });
+        sudahKlikSSO = r.some((x) => x.diklik);
+      } else if (u.host === CONFIG.SSO_HOST && !sudahKirim) {
+        const r = await jalankanDiTab('isiSSO', { username, password });
+        const hasil = r.find((x) => x.utama);
+        if (!hasil || !hasil.terisi) throw new Berhenti((hasil && hasil.pesan) || 'Form SSO tidak ditemukan.');
+        sudahKirim = true;
+        username = '';
+        password = '';
+        if (usernameEl) usernameEl.value = '';
+        if (passwordEl) passwordEl.value = '';
+      }
+      await tidurMs(2000);
+    }
+  } finally {
+    username = '';
+    password = '';
+  }
+  throw new Berhenti(stopFlag ? 'Dihentikan.' : 'Waktu login otomatis habis (5 menit). Proses dihentikan.');
+}
+
 async function tungguLogin() {
+  if (loginOtomatisDipilih()) return tungguLoginOtomatis();
   log('Sesi belum aktif. Silakan login SSO di jendela kerja...');
   await chrome.windows.update(workWinId, { focused: true });
   let sudahKlik = false;

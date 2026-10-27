@@ -90,7 +90,7 @@ async function pilihTabKerja() {
 function pasangPanel() {
   $('btnBuka').onclick = async () => {
     if (CONFIG.HOST.startsWith('GANTI')) return log('Isi HOST di config.js dulu.');
-    const ok = await chrome.permissions.request({ origins: [`https://${CONFIG.HOST}/*`] });
+    const ok = await chrome.permissions.request({ origins: [`https://${CONFIG.HOST}/*`, `https://${CONFIG.SSO_HOST}/*`] });
     if (!ok) return log('Izin akses ke situs ditolak.');
 
     // Utamakan tab yang sudah terbuka di host target.
@@ -121,6 +121,12 @@ function pasangPanel() {
     const butuh = await butuhLogin(true).catch(() => true);
     setChipSesi(butuh ? 'habis' : 'aktif');
     log(butuh ? 'Belum login.' : 'Sesi aktif.');
+  };
+
+  $('loginOtomatis').onchange = (e) => {
+    const box = $('kredensialSSO');
+    if (box) box.style.display = e.target.checked ? '' : 'none';
+    log(e.target.checked ? 'Login otomatis aktif. Kredensial hanya digunakan sementara.' : 'Login manual aktif.');
   };
 
   $('btnScan').onclick = async () => {

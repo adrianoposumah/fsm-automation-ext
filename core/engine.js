@@ -18,16 +18,41 @@ async function ulangiCariEdit(jumlah, jenisOp, ms, limiter) {
   while (hasil === 0 && cfg && cfg.aktif && percobaan < Math.max(0, Number(cfg.maksimal) || 0)) {
     percobaan++;
     await new Promise((r) => setTimeout(r, Math.max(0, Number(cfg.jedaMs) || 0)));
-    await limiter.tunggu('filter');
-    hasil = jumlahDari(await jalankanDiTab(jenisOp, { css: CONFIG.EDIT_CSS, ms }));
+    hasil = await cariEditDenganPemulihan(jenisOp, { css: CONFIG.EDIT_CSS, ms }, limiter);
   }
   return { jumlah: hasil, percobaan };
 }
 
 async function hitungTombolRevoke(limiter) {
+  await pastikanHalamanSiap(limiter);
   await limiter.tunggu('filter');
   const ms = Math.max(0, Number(CONFIG.TUNGGU_REVOKE_DETEKSI_MS) || 3000);
   return jumlahDari(await jalankanDiTab('hitungRevoke', { ms }));
+}
+
+// Beberapa halaman assignment menampilkan tombol Refresh ketika hasil fetch
+// belum siap. Periksa kondisi ini sebelum mencari Edit/Revoke/sidebar. Jika
+// refresh tetap berada di URL assignment, pencarian boleh dilanjutkan; jika
+// kembali ke /app/ atau menampilkan SSO, minta login manual.
+async function pastikanHalamanSiap(limiter) {
+  const kondisi = (await jalankanDiTab('kondisiHalaman', {})).find((r) => r && r.utama);
+  if (!kondisi) return;
+  if (kondisi.login || kondisi.home || (await butuhLogin(false))) throw new SesiHabis();
+  if (!kondisi.perluRefresh) return;
+
+  await limiter.tunggu('filter');
+  const siap = tungguTab(workTabId, 15000).catch(() => null);
+  const klik = (await jalankanDiTab('klikRefreshHalaman', {})).find((r) => r && r.utama);
+  if (!klik || !klik.diklik) return;
+  await siap;
+
+  const setelah = (await jalankanDiTab('kondisiHalaman', {})).find((r) => r && r.utama);
+  if (setelah && (setelah.login || setelah.home || !setelah.assignment)) throw new SesiHabis();
+}
+
+async function cariEditDenganPemulihan(jenisOp, args, limiter) {
+  await pastikanHalamanSiap(limiter);
+  return jumlahDari(await jalankanDiTab(jenisOp, args));
 }
 
 // Normalisasi angka yang sama dengan operasi injeksi, untuk validasi flag=0
@@ -162,6 +187,7 @@ async function alurKKValidasi(baris, link, petaKK, limiter) {
   let identitas = '';
   if (nikUsul && namaNIKExcel) {
     await limiter.tunggu('filter');
+    await pastikanHalamanSiap(limiter);
     const ru1 = (
       await jalankanDiTab('usaha', {
         blok: 'SE2026 - L BLOK I',
@@ -182,7 +208,8 @@ async function alurKKValidasi(baris, link, petaKK, limiter) {
   }
 
   await limiter.tunggu('filter');
-  const rBlokP = (
+    await pastikanHalamanSiap(limiter);
+    const rBlokP = (
     await jalankanDiTab('bukaBlok', { blok: blokP.sidebar.blok, fieldVarIds: ['no_kk'] })
   ).find((x) => x && x.ada);
   if (!rBlokP || !rBlokP.ok || !rBlokP.formMuncul)
@@ -260,7 +287,7 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
     await buka(href, limiter);
   }
   if (mode === 'review') {
-    const nEd = jumlahDari(await jalankanDiTab('hitung', { css: CONFIG.EDIT_CSS, ms: 8000 }));
+    const nEd = await cariEditDenganPemulihan('hitung', { css: CONFIG.EDIT_CSS, ms: 8000 }, limiter);
     return {
       status: 'REVIEW OK: halaman review terbuka',
       detail: `${maskPath(href)} | tombol Edit ditemukan: ${nEd}`,
@@ -268,7 +295,7 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
   }
 
   await limiter.tunggu('filter');
-  let nEdit = jumlahDari(await jalankanDiTab('klikEdit', { css: CONFIG.EDIT_CSS, ms: 10000 }));
+  let nEdit = await cariEditDenganPemulihan('klikEdit', { css: CONFIG.EDIT_CSS, ms: 10000 }, limiter);
   if (nEdit === 0 && (await butuhLogin(true))) throw new SesiHabis();
   let revoked = false;
   if (nEdit === 0) {
@@ -287,7 +314,7 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
       revoked = true;
       await siapRefresh;
       await limiter.tunggu('filter');
-      nEdit = jumlahDari(await jalankanDiTab('klikEdit', { css: CONFIG.EDIT_CSS, ms: 10000 }));
+      nEdit = await cariEditDenganPemulihan('klikEdit', { css: CONFIG.EDIT_CSS, ms: 10000 }, limiter);
       nEdit = (await ulangiCariEdit(nEdit, 'klikEdit', 10000, limiter)).jumlah;
     } else if (jumlahRevoke === 0) {
       // Bila Revoke tidak tersedia, selesaikan sisa dua percobaan Edit.
@@ -309,8 +336,10 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
     .filter(Boolean);
 
   const periksaSidebar = async () => {
+    await pastikanHalamanSiap(limiter);
     if (blok.sidebar.item) {
       // Blok dengan daftar item (mis. Blok II — pilih usaha)
+      await pastikanHalamanSiap(limiter);
       return (
         await jalankanDiTab('usaha', {
           blok: blok.sidebar.blok,
@@ -325,6 +354,7 @@ async function alurBaris(baris, link, mode, pilih, limiter, opsi) {
       ).find((r) => r.ada);
     }
     // Blok tanpa item (mis. Blok P — form langsung tampil setelah header dibuka)
+    await pastikanHalamanSiap(limiter);
     return (
       await jalankanDiTab('bukaBlok', {
         blok: blok.sidebar.blok,
@@ -729,7 +759,7 @@ async function alurKBLI(baris, link, petaKBLI, limiter) {
   // Samakan dengan alur Update Usaha per Flag: langsung jalankan klikEdit.
   // Assignment approved yang tidak punya Edit kemudian ditangani dengan Revoke.
   await limiter.tunggu('filter');
-  let nEdit = jumlahDari(await jalankanDiTab('klikEdit', { css: CONFIG.EDIT_CSS, ms: 10000 }));
+  let nEdit = await cariEditDenganPemulihan('klikEdit', { css: CONFIG.EDIT_CSS, ms: 10000 }, limiter);
   if (nEdit === 0 && (await butuhLogin(true))) throw new SesiHabis();
   let revoked = false;
   if (nEdit === 0) {
@@ -747,7 +777,7 @@ async function alurKBLI(baris, link, petaKBLI, limiter) {
       revoked = true;
       await siapRefresh;
       await limiter.tunggu('filter');
-      nEdit = jumlahDari(await jalankanDiTab('klikEdit', { css: CONFIG.EDIT_CSS, ms: 10000 }));
+      nEdit = await cariEditDenganPemulihan('klikEdit', { css: CONFIG.EDIT_CSS, ms: 10000 }, limiter);
       nEdit = (await ulangiCariEdit(nEdit, 'klikEdit', 10000, limiter)).jumlah;
     } else if (jumlahRevoke === 0) {
       nEdit = (await ulangiCariEdit(nEdit, 'klikEdit', 10000, limiter)).jumlah;
@@ -762,6 +792,7 @@ async function alurKBLI(baris, link, petaKBLI, limiter) {
   }
 
   await limiter.tunggu('filter');
+  await pastikanHalamanSiap(limiter);
   const ru = (await jalankanDiTab('usaha', {
     blok: blok.sidebar.blok,
     grup: blok.sidebar.grup,
@@ -884,6 +915,7 @@ async function alurKK(baris, link, petaKK, limiter) {
   let namaH = '';
   if (nikUsul && namaNIKExcel) {
     await limiter.tunggu('filter');
+    await pastikanHalamanSiap(limiter);
     const ru1 = (
       await jalankanDiTab('usaha', {
         blok: blok1.sidebar.blok,
@@ -942,7 +974,7 @@ async function alurKK(baris, link, petaKK, limiter) {
     };
 
   // 8) Cek tombol Edit
-  let nEdit = jumlahDari(await jalankanDiTab('hitung', { css: CONFIG.EDIT_CSS, ms: 5000 }));
+  let nEdit = await cariEditDenganPemulihan('hitung', { css: CONFIG.EDIT_CSS, ms: 5000 }, limiter);
 
   // 9) Jika Edit belum ada, cek Revoke segera sebelum menghabiskan retry Edit.
   if (nEdit === 0) {
@@ -966,10 +998,10 @@ async function alurKK(baris, link, petaKK, limiter) {
       await siapRefresh;
 
       nEdit = jumlahDari(
-        await jalankanDiTab('hitung', {
+        await cariEditDenganPemulihan('hitung', {
           css: CONFIG.EDIT_CSS,
           ms: 10000,
-        }),
+        }, limiter),
       );
       nEdit = (await ulangiCariEdit(nEdit, 'hitung', 10000, limiter)).jumlah;
       if (nEdit !== 1)
@@ -1004,7 +1036,7 @@ async function alurKK(baris, link, petaKK, limiter) {
 
   // 11) Klik Edit (semua pencatatan dilakukan di halaman /edit)
   await limiter.tunggu('filter');
-  await jalankanDiTab('klikEdit', { css: CONFIG.EDIT_CSS, ms: 10000 });
+  await cariEditDenganPemulihan('klikEdit', { css: CONFIG.EDIT_CSS, ms: 10000 }, limiter);
   if (!(await tungguUrl((p) => /(?:^|\/)edit(?:\/|$)/.test(p), 10000)))
     return {
       status: 'GAGAL: halaman /edit tidak terbuka',
@@ -1016,6 +1048,7 @@ async function alurKK(baris, link, petaKK, limiter) {
 
   // 11) Blok P di /edit → baca no_kk
   await limiter.tunggu('filter');
+  await pastikanHalamanSiap(limiter);
   const rBlokP = (
     await jalankanDiTab('bukaBlok', {
       blok: blokP.sidebar.blok,
