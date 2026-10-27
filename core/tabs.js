@@ -93,8 +93,6 @@ async function tungguLoginOtomatis() {
         sudahKirim = true;
         username = '';
         password = '';
-        if (usernameEl) usernameEl.value = '';
-        if (passwordEl) passwordEl.value = '';
       }
       await tidurMs(2000);
     }
